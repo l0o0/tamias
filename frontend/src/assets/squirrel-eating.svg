@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none">
+  <title>tamiops · 吃坚果的松鼠</title>
+  <style>
+    .tm-eat-tail { transform-origin: 77px 135px; animation: tm-eat-tail 3200ms ease-in-out infinite; }
+    .tm-eat-head { transform-origin: 115px 87px; animation: tm-nibble 1600ms ease-in-out infinite; }
+    .tm-eat-hands { animation: tm-lift-nut 1600ms ease-in-out infinite; }
+    .tm-eat-crumb { opacity: 0; animation: tm-crumb 1600ms ease-out infinite; }
+    .tm-eat-crumb-late { animation-delay: 190ms; }
+    @keyframes tm-eat-tail {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(-3deg); }
+    }
+    @keyframes tm-lift-nut {
+      0%, 78%, 100% { transform: translate(0, 0); }
+      22%, 56% { transform: translate(-1px, -4px); }
+      38%, 66% { transform: translate(0, -2px); }
+    }
+    @keyframes tm-nibble {
+      0%, 16%, 76%, 100% { transform: rotate(0deg); }
+      28%, 52% { transform: rotate(4deg); }
+      40%, 64% { transform: rotate(1deg); }
+    }
+    @keyframes tm-crumb {
+      0%, 32% { opacity: 0; transform: translate(0, 0); }
+      38% { opacity: .85; }
+      66%, 100% { opacity: 0; transform: translate(4px, 13px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tm-eat-tail, .tm-eat-head, .tm-eat-hands, .tm-eat-crumb { animation: none !important; }
+    }
+  </style>
+  <g fill="#252629">
+    <g class="tm-eat-tail">
+      <path d="M28 36C47 10 76 14 89 38C103 65 91 83 68 101C71 86 82 77 82 60C83 32 53 13 28 36Z"/>
+      <path d="M26 64C14 59 16 43 27 35C44 22 66 32 72 51C81 75 64 91 59 109C54 127 66 140 83 144C63 150 42 140 33 125C21 105 32 91 40 76C51 54 30 46 26 64Z"/>
+    </g>
+    <path d="M67 120C65 103 73 91 88 87C101 83 106 78 109 68C113 81 107 89 94 93C79 97 71 107 67 120Z"/>
+    <path d="M76 141C62 126 71 108 87 102C103 97 108 93 111 84L122 87C123 99 126 102 123 111C121 117 118 122 114 124C113 118 107 113 98 113C115 119 119 132 110 141C120 140 129 144 128 148H101C90 150 82 148 76 141Z"/>
+    <path d="M65 138C76 144 92 144 107 142L113 148C94 150 74 152 61 146Z"/>
+    <g class="tm-eat-head">
+      <path fill-rule="evenodd" d="M111 87C116 77 108 69 109 61C109 56 111 53 113 53C118 53 123 58 124 64C136 66 138 74 144 78C150 82 145 87 137 90C128 94 118 95 111 87ZM133 75C129 71 126 74 128 78C131 82 136 80 133 75Z"/>
+    </g>
+    <g class="tm-eat-hands">
+      <!-- A warm acorn is the sole colour accent. Its cap remains legible at 32px. -->
+      <g transform="rotate(15 135 100)">
+        <path d="M127 96C125 104 130 111 135 113C141 110 145 102 143 96Z" fill="#C99558"/>
+        <path d="M126 96C126 89 142 88 145 96C141 100 129 100 126 96Z" fill="#8A5B36"/>
+        <path d="M135 91L136 87" stroke="#8A5B36" stroke-width="3" stroke-linecap="round"/>
+        <path d="M131 101C130 104 132 107 134 108" stroke="#EAC398" stroke-width="2" stroke-linecap="round"/>
+      </g>
+      <path d="M116 95C121 92 124 96 128 100C131 102 135 101 136 104C136 108 129 109 125 106L116 102Z"/>
+      <path d="M145 98C149 99 147 105 143 107L139 107C137 105 139 103 141 102Z"/>
+    </g>
+  </g>
+  <g fill="#C99558">
+    <circle class="tm-eat-crumb" cx="146" cy="92" r="1.5"/>
+    <circle class="tm-eat-crumb tm-eat-crumb-late" cx="143" cy="94" r="1"/>
+  </g>
+</svg>

@@ -1,0 +1,36 @@
+name: Core and desktop
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: go test -race ./internal/... ./cmd/tami
+        env:
+          CGO_ENABLED: '1'
+      - run: go vet ./internal/... ./cmd/tami
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - name: Linux desktop prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev build-essential pkg-config
+      - name: Build desktop
+        shell: bash
+        run: sh scripts/build-desktop.sh
+      - name: Build headless host
+        shell: bash
+        run: sh scripts/build-cli.sh

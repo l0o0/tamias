@@ -1,0 +1,7 @@
+Tool: built-in image_gen (imagegen skill)
+Mode: edit / background-extraction; transparent_background=true
+Input: user-provided squirrel icon (existing build/assets/app-icon.png)
+Output: build/assets/app-icon.png; frontend/public/app-icon.png
+
+Final prompt:
+Use case: background-extraction. Edit target: the attached existing Tami squirrel app icon. Remove the entire off-white rounded-square tile, its border/shadow, and all surrounding background. Keep ONLY the existing dark charcoal squirrel mark, preserving its recognizable exact silhouette, proportions, curved tail, body, head, ear and eye shape. All light negative-space areas within the tail/body and the eye must also be true transparent alpha. Do not redesign the squirrel. Output a clean square PNG with actual transparent background, no checkerboard painted into the pixels, no tile, no outline, no shadow, no text. Center the squirrel with balanced transparent padding, suitable for a desktop app icon and small sidebar logo.
