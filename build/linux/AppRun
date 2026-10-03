@@ -1,0 +1,39 @@
+#!/bin/sh
+set -e
+
+if [ -z "${APPDIR:-}" ]; then
+    echo "AppImage runtime did not set APPDIR" >&2
+    exit 1
+fi
+
+# The pinned GTK hook appends the caller's existing data paths.
+XDG_DATA_DIRS="${XDG_DATA_DIRS:-}"
+export XDG_DATA_DIRS
+
+# WebKitGTK normally has compiled-in /usr helper locations. Point it at the
+# helper and injected-bundle paths relocated into this AppDir.
+if [ -r "$APPDIR/.tamiops-webkit-paths" ]; then
+    WEBKIT_EXEC_PATH_REL=
+    WEBKIT_INJECTED_BUNDLE_PATH_REL=
+    {
+        IFS= read -r WEBKIT_EXEC_PATH_REL || true
+        IFS= read -r WEBKIT_INJECTED_BUNDLE_PATH_REL || true
+    } < "$APPDIR/.tamiops-webkit-paths"
+    if [ -n "$WEBKIT_EXEC_PATH_REL" ] && [ -n "$WEBKIT_INJECTED_BUNDLE_PATH_REL" ]; then
+        WEBKIT_EXEC_PATH="$APPDIR/$WEBKIT_EXEC_PATH_REL"
+        WEBKIT_INJECTED_BUNDLE_PATH="$APPDIR/$WEBKIT_INJECTED_BUNDLE_PATH_REL"
+        export WEBKIT_EXEC_PATH WEBKIT_INJECTED_BUNDLE_PATH
+    fi
+fi
+
+# The pinned linuxdeploy GTK plugin installs this hook to set GTK/GLib resource
+# paths. Keep it in place for WebKitGTK and do not alter WebKit sandbox flags.
+if [ -d "$APPDIR/apprun-hooks" ]; then
+    for hook in "$APPDIR"/apprun-hooks/*.sh; do
+        [ -f "$hook" ] || continue
+        # shellcheck source=/dev/null
+        . "$hook"
+    done
+fi
+
+exec "$APPDIR/usr/bin/tamiops" "$@"

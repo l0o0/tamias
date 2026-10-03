@@ -1,0 +1,165 @@
+name: Release installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without v (for example 0.2.0-beta.1)
+        required: true
+        type: string
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-installers
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED_VERSION:-${GITHUB_REF_NAME#v}}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo 'Invalid release version' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: macos-15-intel
+            platform: macos
+            arch: amd64
+          - runner: windows-2022
+            platform: windows
+            arch: amd64
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Linux build and smoke-test dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev build-essential pkg-config patchelf squashfs-tools desktop-file-utils libfuse2t64 xvfb dbus-x11 dpkg-dev python3
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Test core and CLI
+        run: go test -race ./internal/... ./cmd/tami
+      - name: Static checks
+        run: go vet ./internal/... ./cmd/tami
+      - name: Build desktop and CLI
+        shell: bash
+        run: |
+          sh scripts/build-desktop.sh
+          sh scripts/build-cli.sh
+          test "$(bin/cli/tamiops$(go env GOEXE) -version)" = "$VERSION"
+      - name: Package macOS installer
+        if: runner.os == 'macOS'
+        run: sh scripts/package-macos.sh
+      - name: Verify macOS installer payload
+        if: runner.os == 'macOS'
+        run: |
+          codesign --verify --deep --strict bin/tamiops.app
+          plutil -lint bin/tamiops.app/Contents/Info.plist
+          sudo installer -pkg "dist/tamiops-${VERSION}-macos-${ARCH}.pkg" -target /
+          test "$(/Applications/tamiops.app/Contents/MacOS/tamiops -version)" = "$VERSION"
+          test -f /Applications/tamiops.app/Contents/Resources/LICENSE
+          test -f /Applications/tamiops.app/Contents/Resources/THIRD_PARTY_NOTICES.txt
+      - name: Package Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+      - name: Verify Windows install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/verify-windows-installer.ps1
+      - name: Package Linux AppImage
+        if: runner.os == 'Linux'
+        run: bash scripts/package-linux.sh
+      - name: Verify Linux AppImage
+        if: runner.os == 'Linux'
+        run: sh scripts/verify-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/*.pkg
+            dist/*-setup.exe
+            dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: dist
+          merge-multiple: true
+      - name: Check artifact set and create checksums
+        run: |
+          test -s "dist/tamiops-${VERSION}-macos-arm64.pkg"
+          test -s "dist/tamiops-${VERSION}-macos-amd64.pkg"
+          test -s "dist/tamiops-${VERSION}-windows-amd64-setup.exe"
+          test -s "dist/tamiops-${VERSION}-linux-amd64.AppImage"
+          cd dist
+          sha256sum *.pkg *.exe *.AppImage > SHA256SUMS.txt
+      - name: Create reviewable release draft
+        run: |
+          tag="v$VERSION"
+          notes="docs/releases/$VERSION.md"
+          test -f "$notes"
+          if gh release view "$tag" --json isDraft --jq '.isDraft' > .release-draft 2>/dev/null; then
+            test "$(cat .release-draft)" = true || { echo 'Refusing to replace a published release'; exit 1; }
+            test "$(gh release view "$tag" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA" || { echo 'Draft belongs to a different commit'; exit 1; }
+          else
+            flags=()
+            [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
+            gh release create "$tag" --target "$GITHUB_SHA" --title "tamiops $VERSION" --notes-file "$notes" --draft "${flags[@]}"
+          fi
+          gh release upload "$tag" dist/*.pkg dist/*.exe dist/*.AppImage dist/SHA256SUMS.txt --clobber

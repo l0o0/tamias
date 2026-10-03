@@ -39,7 +39,12 @@ func main() {
 func run() error {
 	serve := flag.Bool("serve", false, "Run a loopback browser development host instead of the native window")
 	data := flag.String("data-dir", "", "Isolated application data directory")
+	version := flag.Bool("version", false, "Print application version and exit")
 	flag.Parse()
+	if *version {
+		fmt.Println(core.Version)
+		return nil
+	}
 	if *data == "" {
 		base, err := os.UserConfigDir()
 		if err != nil {

@@ -367,15 +367,6 @@ func safeOperationError(err error) string {
 	}
 }
 
-func syncDirectory(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
-}
-
 func fileSHA256(f *os.File) (string, int64, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", 0, err

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -795,6 +796,12 @@ func TestSyncCreatesEmptyDirectoriesAndRemovesOnlyVerifiedEmptyLocalDirs(t *test
 
 func TestCrossPlatformNamesAndCaseCollisions(t *testing.T) {
 	t.Run("windows-illegal", func(t *testing.T) {
+		if err := validSyncPath("bad?.txt"); !errors.Is(err, storage.ErrInvalidPath) {
+			t.Fatalf("illegal path was accepted: %v", err)
+		}
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows cannot create the illegal-name filesystem fixture")
+		}
 		s, id := testService(t)
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "bad?.txt"), []byte("x"), 0600); err != nil {
@@ -806,6 +813,12 @@ func TestCrossPlatformNamesAndCaseCollisions(t *testing.T) {
 		}
 	})
 	t.Run("invalid-utf8", func(t *testing.T) {
+		if err := validSyncPath(string([]byte{0xff})); !errors.Is(err, storage.ErrInvalidPath) {
+			t.Fatalf("invalid UTF-8 path was accepted: %v", err)
+		}
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows converts filenames to UTF-16; invalid UTF-8 cannot round-trip")
+		}
 		s, id := testService(t)
 		dir := t.TempDir()
 		name := string([]byte{0xff})

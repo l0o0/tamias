@@ -31,8 +31,13 @@ func run() error {
 	jobID := flags.String("job", "", "Sync job ID")
 	token := flags.String("token", "", "Preview token for run")
 	confirm := flags.Bool("confirm-deletes", false, "Confirm deletion list from preview")
+	version := flags.Bool("version", false, "Print application version and exit")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return err
+	}
+	if *version {
+		fmt.Println(core.Version)
+		return nil
 	}
 	command := "status"
 	if flags.NArg() > 0 {

@@ -22,7 +22,9 @@ import (
 	"tamiops/internal/storage"
 )
 
-const Version = "0.2.0-dev"
+// Version is set by the release build using -ldflags -X.
+var Version = "0.2.0-dev"
+
 const StagingLimit int64 = 1 << 30
 const RecoveryLimit int64 = 1 << 30
 const FileLimit int64 = 128 << 20
