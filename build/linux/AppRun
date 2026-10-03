@@ -5,6 +5,41 @@ if [ -z "${APPDIR:-}" ]; then
     echo "AppImage runtime did not set APPDIR" >&2
     exit 1
 fi
+
+# Remember only variables this launcher and the pinned GTK hook change so
+# external applications opened later can recover the user's environment.
+# Variable names passed to eval below come only from this fixed list; values
+# are kept as quoted data and never evaluated or written to a file.
+save_original_env() {
+    _tamiops_env_name=$1
+    eval "_tamiops_env_is_set=\${${_tamiops_env_name}+x}"
+    eval "_tamiops_env_value=\${${_tamiops_env_name}-}"
+    if [ "$_tamiops_env_is_set" = x ]; then
+        _tamiops_env_is_set=1
+    else
+        _tamiops_env_is_set=0
+    fi
+    export "TAMIOPS_ORIGINAL_${_tamiops_env_name}_SET=$_tamiops_env_is_set"
+    export "TAMIOPS_ORIGINAL_${_tamiops_env_name}=$_tamiops_env_value"
+}
+
+for _tamiops_env_name in \
+    APPDIR APPIMAGE WEBKIT_EXEC_PATH WEBKIT_INJECTED_BUNDLE_PATH \
+    TAMIOPS_WEBKIT_SOURCE_EXEC_DIR LD_LIBRARY_PATH LD_PRELOAD \
+    GTK_DATA_PREFIX GTK_THEME GDK_BACKEND XDG_DATA_DIRS \
+    GSETTINGS_SCHEMA_DIR GI_TYPELIB_PATH GTK_EXE_PREFIX GTK_PATH \
+    GDK_PIXBUF_MODULE_FILE; do
+    case "$_tamiops_env_name" in
+        # The AppImage runtime provides these before AppRun starts; they are
+        # launcher state, not the caller's original APPDIR/APPIMAGE settings.
+        APPDIR|APPIMAGE)
+            export "TAMIOPS_ORIGINAL_${_tamiops_env_name}_SET=0"
+            export "TAMIOPS_ORIGINAL_${_tamiops_env_name}="
+            ;;
+        *) save_original_env "$_tamiops_env_name" ;;
+    esac
+done
+
 export APPDIR
 
 # The pinned GTK hook appends the caller's existing data paths.
@@ -46,11 +81,8 @@ if [ ! -r "$WEBKIT_PATH_SHIM" ]; then
     echo "WebKit sandbox helper path shim is missing: $WEBKIT_PATH_SHIM" >&2
     exit 1
 fi
-TAMIOPS_ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
-TAMIOPS_ORIGINAL_LD_PRELOAD="${LD_PRELOAD:-}"
 LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 LD_PRELOAD="$WEBKIT_PATH_SHIM${LD_PRELOAD:+:$LD_PRELOAD}"
-export TAMIOPS_ORIGINAL_LD_LIBRARY_PATH TAMIOPS_ORIGINAL_LD_PRELOAD
 export LD_LIBRARY_PATH LD_PRELOAD
 
 exec "$APPDIR/usr/bin/tamiops" "$@"

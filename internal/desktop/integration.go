@@ -30,25 +30,41 @@ func Open(filename string) error {
 	return cmd.Run()
 }
 
-// AppImage's private loader paths are for tamiops and WebKit, not the user's
-// external editor. Restore the caller's loader settings before invoking it.
+// AppImage and the bundled GTK hook change paths and display settings for
+// tamiops itself. Restore the caller's original values before invoking an
+// external desktop application.
 func externalEnvironment() []string {
 	env := os.Environ()
 	if os.Getenv("TAMIOPS_WEBKIT_SOURCE_EXEC_DIR") == "" {
 		return env
 	}
+
+	privateKeys := []string{
+		"APPDIR", "APPIMAGE", "WEBKIT_EXEC_PATH", "WEBKIT_INJECTED_BUNDLE_PATH",
+		"TAMIOPS_WEBKIT_SOURCE_EXEC_DIR", "LD_LIBRARY_PATH", "LD_PRELOAD",
+		"GTK_DATA_PREFIX", "GTK_THEME", "GDK_BACKEND", "XDG_DATA_DIRS",
+		"GSETTINGS_SCHEMA_DIR", "GI_TYPELIB_PATH", "GTK_EXE_PREFIX", "GTK_PATH",
+		"GDK_PIXBUF_MODULE_FILE",
+	}
+	private := make(map[string]struct{}, len(privateKeys)*3)
+	for _, key := range privateKeys {
+		private[key] = struct{}{}
+		private["TAMIOPS_ORIGINAL_"+key] = struct{}{}
+		private["TAMIOPS_ORIGINAL_"+key+"_SET"] = struct{}{}
+	}
 	result := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, _ := strings.Cut(entry, "=")
-		switch key {
-		case "LD_LIBRARY_PATH", "LD_PRELOAD", "APPDIR", "APPIMAGE", "WEBKIT_EXEC_PATH", "WEBKIT_INJECTED_BUNDLE_PATH", "TAMIOPS_WEBKIT_SOURCE_EXEC_DIR", "TAMIOPS_ORIGINAL_LD_LIBRARY_PATH", "TAMIOPS_ORIGINAL_LD_PRELOAD":
+		if _, drop := private[key]; drop {
 			continue
 		}
 		result = append(result, entry)
 	}
-	for _, key := range []string{"LD_LIBRARY_PATH", "LD_PRELOAD"} {
-		if value := os.Getenv("TAMIOPS_ORIGINAL_" + key); value != "" {
-			result = append(result, key+"="+value)
+	for _, key := range privateKeys {
+		if os.Getenv("TAMIOPS_ORIGINAL_"+key+"_SET") == "1" {
+			if value, exists := os.LookupEnv("TAMIOPS_ORIGINAL_" + key); exists {
+				result = append(result, key+"="+value)
+			}
 		}
 	}
 	return result

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestExternalEditorDoesNotInheritAppImageLoader(t *testing.T) {
+func TestExternalEditorRestoresOriginalAppImageAndGtkEnvironment(t *testing.T) {
 	t.Setenv("TAMIOPS_WEBKIT_SOURCE_EXEC_DIR", "/usr/lib/webkitgtk-6.0")
 	t.Setenv("APPDIR", "/tmp/appimage")
 	t.Setenv("APPIMAGE", "/home/user/tamiops.AppImage")
@@ -15,20 +15,70 @@ func TestExternalEditorDoesNotInheritAppImageLoader(t *testing.T) {
 	t.Setenv("LD_PRELOAD", "/tmp/appimage/usr/lib/path-shim.so")
 	t.Setenv("WEBKIT_EXEC_PATH", "/tmp/appimage/usr/lib/webkitgtk-6.0")
 	t.Setenv("WEBKIT_INJECTED_BUNDLE_PATH", "/tmp/appimage/usr/lib/injected-bundle")
-	t.Setenv("TAMIOPS_ORIGINAL_LD_LIBRARY_PATH", "/opt/user/lib")
-	t.Setenv("TAMIOPS_ORIGINAL_LD_PRELOAD", "")
+	t.Setenv("GTK_DATA_PREFIX", "/tmp/appimage/usr")
+	t.Setenv("GTK_THEME", "Adwaita:dark")
+	t.Setenv("GDK_BACKEND", "x11")
+	t.Setenv("XDG_DATA_DIRS", "/tmp/appimage/usr/share:/usr/share")
+	t.Setenv("GSETTINGS_SCHEMA_DIR", "/tmp/appimage/usr/share/glib-2.0/schemas")
+	t.Setenv("GI_TYPELIB_PATH", "/tmp/appimage/usr/lib/girepository-1.0")
+	t.Setenv("GTK_EXE_PREFIX", "/tmp/appimage/usr")
+	t.Setenv("GTK_PATH", "/tmp/appimage/usr/lib/gtk-4.0")
+	t.Setenv("GDK_PIXBUF_MODULE_FILE", "/tmp/appimage/usr/lib/gdk-pixbuf-2.0/loaders.cache")
+
+	originals := map[string]struct {
+		set   bool
+		value string
+	}{
+		"APPDIR":                         {set: false},
+		"APPIMAGE":                       {set: false},
+		"WEBKIT_EXEC_PATH":               {set: true, value: "/home/user/custom-webkit"},
+		"WEBKIT_INJECTED_BUNDLE_PATH":    {set: true, value: "/home/user/injected $(touch /tmp/nope); 'quoted'"},
+		"TAMIOPS_WEBKIT_SOURCE_EXEC_DIR": {set: false},
+		"LD_LIBRARY_PATH":                {set: true, value: "/opt/user lib;$HOME/$(touch /tmp/nope); 'quoted'"},
+		"LD_PRELOAD":                     {set: false},
+		"GTK_DATA_PREFIX":                {set: true, value: ""},
+		"GTK_THEME":                      {set: true, value: "Adwaita:user-theme"},
+		"GDK_BACKEND":                    {set: false},
+		"XDG_DATA_DIRS":                  {set: true, value: "/opt/user/share:/usr/share"},
+		"GSETTINGS_SCHEMA_DIR":           {set: false},
+		"GI_TYPELIB_PATH":                {set: true, value: "/opt/user/girepository"},
+		"GTK_EXE_PREFIX":                 {set: false},
+		"GTK_PATH":                       {set: true, value: "/opt/user/gtk path;$(touch /tmp/nope)"},
+		"GDK_PIXBUF_MODULE_FILE":         {set: false},
+	}
+	for key, original := range originals {
+		marker := "TAMIOPS_ORIGINAL_" + key
+		if original.set {
+			t.Setenv(marker+"_SET", "1")
+		} else {
+			t.Setenv(marker+"_SET", "0")
+		}
+		t.Setenv(marker, original.value)
+	}
 	t.Setenv("DISPLAY", ":42")
 	values := make(map[string]string)
 	for _, entry := range externalEnvironment() {
 		key, value, _ := strings.Cut(entry, "=")
 		values[key] = value
 	}
-	if values["LD_LIBRARY_PATH"] != "/opt/user/lib" || values["DISPLAY"] != os.Getenv("DISPLAY") {
-		t.Fatal("external editor lost the caller's library or display settings")
+	for key, original := range originals {
+		value, exists := values[key]
+		if original.set && (!exists || value != original.value) {
+			t.Errorf("external editor did not restore %s: got (%q, %t), want (%q, true)", key, value, exists, original.value)
+		}
+		if !original.set && exists {
+			t.Errorf("external editor retained %s although it was originally unset", key)
+		}
 	}
-	for _, key := range []string{"LD_PRELOAD", "APPDIR", "APPIMAGE", "WEBKIT_EXEC_PATH", "WEBKIT_INJECTED_BUNDLE_PATH", "TAMIOPS_WEBKIT_SOURCE_EXEC_DIR"} {
-		if _, exists := values[key]; exists {
-			t.Fatalf("external editor inherited AppImage setting %s", key)
+	if values["DISPLAY"] != os.Getenv("DISPLAY") {
+		t.Fatal("external editor lost the caller's display setting")
+	}
+	for key := range originals {
+		if _, exists := values["TAMIOPS_ORIGINAL_"+key]; exists {
+			t.Errorf("external editor inherited saved private value for %s", key)
+		}
+		if _, exists := values["TAMIOPS_ORIGINAL_"+key+"_SET"]; exists {
+			t.Errorf("external editor inherited saved private presence marker for %s", key)
 		}
 	}
 }

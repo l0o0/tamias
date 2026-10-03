@@ -80,10 +80,25 @@ func TestAuthorizationRequestCoalescesPendingCallersAndBoundsWait(t *testing.T) 
 		t.Fatalf("late OS result changed preferences after callers timed out: %d saves", got)
 	}
 
-	// Once the flight is complete, a later call may query the OS again.
-	allowed, err := check()
-	if err != nil || allowed {
-		t.Fatalf("fresh request returned allowed=%v err=%v, want denied without error", allowed, err)
+	// The fake callback closes finished just before returning. The goroutine
+	// coordinating the flight still has to publish its result and clear pending,
+	// so a caller in that small interval correctly joins the old request. Keep
+	// retrying until a call starts after that completion has been published.
+	freshDeadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-freshDeadline:
+			t.Fatalf("fresh request was not started after the completed flight; calls=%d", calls.Load())
+		default:
+		}
+		allowed, err := check()
+		if calls.Load() == 1 {
+			continue
+		}
+		if err != nil || allowed {
+			t.Fatalf("fresh request returned allowed=%v err=%v, want denied without error", allowed, err)
+		}
+		break
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("fresh completed request count=%d, want 2", got)
