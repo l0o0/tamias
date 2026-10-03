@@ -36,7 +36,7 @@ fi
 [[ "$DISTRO_ID" == "ubuntu" && "$DISTRO_VERSION_ID" == "24.04" ]] || \
     die "packaging is pinned to Ubuntu 24.04; found $DISTRO_PRETTY_NAME"
 
-for tool in curl sha256sum ldd readelf file pkg-config dpkg-query dpkg-architecture desktop-file-validate find realpath; do
+for tool in curl sha256sum ldd readelf file pkg-config dpkg-query dpkg-architecture desktop-file-validate find realpath patchelf python3; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is missing: $tool"
 done
 
@@ -133,6 +133,13 @@ install -m 0644 "$DESKTOP" "$APP_DIR/tamiops.desktop"
 install -m 0755 "$APP_RUN" "$APP_DIR/AppRun"
 install -m 0644 "$APP_LICENSE" "$APP_DIR/usr/share/doc/tamiops/LICENSE"
 install -m 0644 "$APP_NOTICES" "$APP_DIR/usr/share/doc/tamiops/THIRD_PARTY_NOTICES.txt"
+cat >> "$APP_DIR/usr/share/doc/tamiops/THIRD_PARTY_NOTICES.txt" <<'EOF'
+
+Additional license and copyright notices for AppImage packaging tools and the
+bundled Ubuntu GTK/WebKitGTK runtime are installed beside this file. See
+APPIMAGE_PACKAGING.txt and system-dependencies/ for their licenses, versions,
+and source package information.
+EOF
 install -m 0644 "$ROOT_DIR/build/linux/packaging-provenance.txt" "$APP_DIR/usr/share/doc/tamiops/APPIMAGE_PACKAGING.txt"
 install -m 0644 "$ROOT_DIR"/build/linux/licenses/* "$APP_DIR/usr/share/doc/tamiops/"
 
@@ -151,6 +158,9 @@ find_webkit_file() {
     while IFS= read -r -d '' path; do
         [[ -f "$path" ]] || continue
         found=1
+        if [[ "$name" == WebKitWebProcess && -z "${WEBKIT_SOURCE_EXEC_DIR:-}" ]]; then
+            WEBKIT_SOURCE_EXEC_DIR="${path%/*}"
+        fi
         target="$APP_DIR/${path#/}"
         mkdir -p -- "$(dirname -- "$target")"
         install -m "$(stat -c '%a' "$path")" "$path" "$target"
@@ -175,6 +185,10 @@ find_webkit_file libwebkitgtkinjectedbundle.so yes
 
 WEBKIT_EXEC_PATH_REL="${WEBKIT_EXECUTABLES[0]#"$APP_DIR"/}"
 WEBKIT_EXEC_PATH_REL="${WEBKIT_EXEC_PATH_REL%/*}"
+WEBKIT_SOURCE_EXEC_REL="${WEBKIT_EXEC_PATH_REL#usr/}"
+WEBKIT_SOURCE_EXEC_PATH="/usr/$WEBKIT_SOURCE_EXEC_REL"
+[[ "$WEBKIT_SOURCE_EXEC_PATH" == "$WEBKIT_SOURCE_EXEC_DIR" ]] || \
+    die "WebKit helper install path is unexpected: $WEBKIT_SOURCE_EXEC_DIR (expected $WEBKIT_SOURCE_EXEC_PATH)"
 for helper in "${WEBKIT_EXECUTABLES[@]}"; do
     helper_dir="${helper%/*}"
     [[ "$helper_dir" == "$APP_DIR/$WEBKIT_EXEC_PATH_REL" ]] || \
@@ -223,6 +237,55 @@ done
 LINUXDEPLOY_ARGS+=(--plugin gtk)
 APPIMAGE_EXTRACT_AND_RUN=1 "$LINUXDEPLOY" "${LINUXDEPLOY_ARGS[@]}"
 
+# WebKit's production process lookup uses the build-time absolute PKGLIBEXECDIR;
+# WEBKIT_EXEC_PATH is only consulted in developer-mode builds. Patch the copied
+# WebKitGTK library path to an equal-length relative path and run from AppDir/usr
+# so the WebKit process lookup remains inside this AppImage on release builds.
+WEBKIT_RELOCATABLE_EXEC_PATH="././/$WEBKIT_SOURCE_EXEC_REL"
+[[ ${#WEBKIT_SOURCE_EXEC_PATH} -eq ${#WEBKIT_RELOCATABLE_EXEC_PATH} ]] || \
+    die "cannot safely relocate WebKit process path; source and replacement lengths differ"
+python3 - "$APP_DIR/usr/lib" "$WEBKIT_SOURCE_EXEC_PATH" "$WEBKIT_RELOCATABLE_EXEC_PATH" <<'PY'
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+old = os.fsencode(sys.argv[2])
+new = os.fsencode(sys.argv[3])
+if len(old) != len(new):
+    raise SystemExit("WebKit relocation must preserve the ELF string length")
+replacements = 0
+patched_files = []
+for path in root.rglob('*'):
+    if not path.is_file():
+        continue
+    try:
+        data = path.read_bytes()
+    except OSError:
+        continue
+    if not data.startswith(b'\x7fELF') or old not in data:
+        continue
+    count = data.count(old)
+    path.write_bytes(data.replace(old, new))
+    replacements += count
+    patched_files.append(str(path))
+if replacements == 0:
+    raise SystemExit(f"no deployed WebKit ELF contained PKGLIBEXECDIR {os.fsdecode(old)}")
+print(f"Relocated WebKit process path in {replacements} ELF string(s): {', '.join(patched_files)}")
+PY
+for elf in "$APP_DIR/usr/bin/tamiops" "${WEBKIT_EXECUTABLES[@]}" "${WEBKIT_LIBRARIES[@]}"; do
+    if [[ "$elf" != "$APP_DIR/usr/bin/tamiops" ]]; then
+        # linuxdeploy can also create a flattened usr/bin copy for the
+        # --executable argument. WebKit starts its original libexec copy, so
+        # give that original helper (and the injected bundle) an AppDir-local
+        # search path explicitly as well.
+        patchelf --set-rpath '$ORIGIN:$ORIGIN/..:$ORIGIN/../..:$ORIGIN/../../..' "$elf"
+    fi
+    elf_rpath="$(patchelf --print-rpath "$elf" 2>/dev/null || true)"
+    [[ "$elf_rpath" == *'$ORIGIN'* ]] || \
+        die "linuxdeploy did not set an AppDir-relative RPATH on ${elf#"$APP_DIR"/}"
+done
+
 collect_package_notices() {
     local doc_dir="$APP_DIR/usr/share/doc/tamiops/system-dependencies"
     local manifest="$doc_dir/packages.tsv"
@@ -238,8 +301,11 @@ collect_package_notices() {
             *) continue ;;
         esac
         source_path="/${deployed#"$APP_DIR"/}"
-        [[ -e "$source_path" || -L "$source_path" ]] || continue
-        owner_output="$(dpkg-query -S -- "$source_path" 2>/dev/null || true)"
+        if [[ -e "$source_path" || -L "$source_path" ]]; then
+            owner_output="$(dpkg-query -S -- "$source_path" 2>/dev/null || true)"
+        else
+            owner_output=""
+        fi
         if [[ -z "$owner_output" ]]; then
             source_path="$(realpath -e -- "$source_path" 2>/dev/null || true)"
             if [[ -n "$source_path" ]]; then

@@ -99,6 +99,7 @@ type config struct {
 type Service struct {
 	stagingMu            sync.Mutex
 	stagingReservations  map[string]int64
+	stagingWritten       map[string]int64
 	closeOnce            sync.Once
 	closeError           error
 	backgroundCancels    map[string]context.CancelFunc
@@ -202,7 +203,7 @@ func New(dir string, vault Vault) (*Service, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &Service{db: db, lock: lock, vault: vault, dir: dir, stores: map[string]storage.Store{}, servers: map[string]*http.Server{}, passwords: map[string]string{}, readerChanged: make(chan struct{}), gatewayStats: map[string]interface{ Stats() gateway.AccessStats }{}, downloadCancels: map[string]context.CancelFunc{}, backgroundCancels: map[string]context.CancelFunc{}, stagingReservations: map[string]int64{}, plans: map[string]Plan{}, jobCancels: map[string]context.CancelFunc{}, jobLocks: map[string]*sync.Mutex{}}
+	s := &Service{db: db, lock: lock, vault: vault, dir: dir, stores: map[string]storage.Store{}, servers: map[string]*http.Server{}, passwords: map[string]string{}, readerChanged: make(chan struct{}), gatewayStats: map[string]interface{ Stats() gateway.AccessStats }{}, downloadCancels: map[string]context.CancelFunc{}, backgroundCancels: map[string]context.CancelFunc{}, stagingReservations: map[string]int64{}, stagingWritten: map[string]int64{}, plans: map[string]Plan{}, jobCancels: map[string]context.CancelFunc{}, jobLocks: map[string]*sync.Mutex{}}
 	for _, column := range []struct{ table, name, definition string }{{"cache_entries", "remote_changed", "INTEGER NOT NULL DEFAULT 0"}, {"cache_entries", "offline", "INTEGER NOT NULL DEFAULT 0"}, {"cache_entries", "checked", "TEXT NOT NULL DEFAULT ''"}, {"migration_jobs", "enabled", "INTEGER NOT NULL DEFAULT 1"}, {"migration_items", "dest_absent", "INTEGER NOT NULL DEFAULT 0"}, {"migration_jobs", "deleted", "INTEGER NOT NULL DEFAULT 0"}} {
 		if err = s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			db.Close()

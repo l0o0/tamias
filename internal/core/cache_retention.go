@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func (s *Service) retireCacheLocked(e CacheEntry) (string, error) {
 	id := ID()
 	dest := filepath.Join(s.dir, "recovery", id+".data")
 	if err = os.Rename(e.LocalPath, dest); err != nil {
-		return "", err
+		return "", fmt.Errorf("旧缓存无法移动到恢复区，原文件已保留；请检查文件权限或关闭占用它的程序: %w", err)
 	}
 	meta := recoveryMetadata{MutableCache: true, Path: e.Path, Entry: storage.Entry{Path: e.Path, Size: info.Size(), ETag: e.ETag}, Created: time.Now().UTC().Format(time.RFC3339)}
 	raw, err := json.Marshal(meta)

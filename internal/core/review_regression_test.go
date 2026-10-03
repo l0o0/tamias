@@ -306,7 +306,7 @@ func TestRetiredCachePreservesEditorWritesAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	editor, err := os.OpenFile(cached.LocalPath, os.O_RDWR, 0600)
+	editor, err := openCacheEditor(cached.LocalPath)
 	if err != nil {
 		t.Fatal(err)
 	}

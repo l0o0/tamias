@@ -5,24 +5,146 @@ cd "$(dirname "$0")/.."
 : "${ARCH:?}"
 image="$PWD/dist/tamiops-${VERSION}-linux-${ARCH}.AppImage"
 test -x "$image"
+image=$(readlink -f "$image")
 test "$("$image" --appimage-extract-and-run -version)" = "$VERSION"
 workspace=$(mktemp -d)
-trap 'rm -rf "$workspace"' EXIT
+apparmor_policy=
+apparmor_profile=
+apparmor_loaded=0
+cleanup() {
+  cleanup_status=0
+  if [ "$apparmor_loaded" -eq 1 ]; then
+    if ! sudo -n apparmor_parser -R "$apparmor_policy"; then
+      echo "Could not unload temporary AppArmor profile $apparmor_profile" >&2
+      cleanup_status=1
+    fi
+  fi
+  rm -rf "$workspace"
+  [ -z "$apparmor_policy" ] || rm -f "$apparmor_policy"
+  return "$cleanup_status"
+}
+trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
-export TAMIOPS_SMOKE_IMAGE="$image" TAMIOPS_SMOKE_DIR="$workspace"
-xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
-  "$TAMIOPS_SMOKE_IMAGE" --appimage-extract-and-run -data-dir "$TAMIOPS_SMOKE_DIR/data" > "$TAMIOPS_SMOKE_DIR/app.log" 2>&1 &
-  pid=$!
-  trap 'kill "$pid" 2>/dev/null || true' EXIT
-  sleep 10
-  if ! kill -0 "$pid" 2>/dev/null; then
-    cat "$TAMIOPS_SMOKE_DIR/app.log"
-    echo 'AppImage exited during desktop startup' >&2
+
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo 'Ubuntu AppImage smoke requires sudo to load and unload its temporary AppArmor profile' >&2
     exit 1
   fi
-  if ! pgrep -f '/WebKitWebProcess' >/dev/null; then
+  if ! command -v apparmor_parser >/dev/null 2>&1; then
+    echo 'Ubuntu AppImage smoke requires apparmor_parser; refusing to skip the user-namespace check' >&2
+    exit 1
+  fi
+  if [ ! -r /sys/module/apparmor/parameters/enabled ] || \
+     ! grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+    echo 'Ubuntu AppImage smoke requires the AppArmor kernel module; refusing to skip the user-namespace check' >&2
+    exit 1
+  fi
+  case "$image" in
+    *[!A-Za-z0-9_./-]*)
+      echo "Cannot safely create an exact-path AppArmor profile for image path: $image" >&2
+      exit 1
+      ;;
+  esac
+  apparmor_profile="tamiops-appimage-smoke-$$"
+  apparmor_policy="$workspace/$apparmor_profile.profile"
+  cat > "$apparmor_policy" <<PROFILE
+abi <abi/4.0>,
+profile $apparmor_profile $image flags=(unconfined) {
+  userns,
+}
+PROFILE
+  apparmor_loaded=1
+  if ! sudo -n apparmor_parser -r -W "$apparmor_policy"; then
+    echo 'Could not load the exact-AppImage AppArmor userns exception; smoke test is not being skipped' >&2
+    exit 1
+  fi
+  echo "Loaded temporary AppArmor userns rule for $image only ($apparmor_profile)."
+fi
+export TAMIOPS_SMOKE_IMAGE="$image" TAMIOPS_SMOKE_DIR="$workspace"
+export TAMIOPS_SMOKE_APPARMOR_PROFILE="$apparmor_profile"
+xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
+  data_dir="$TAMIOPS_SMOKE_DIR/data"
+  "$TAMIOPS_SMOKE_IMAGE" --appimage-extract-and-run --data-dir "$data_dir" > "$TAMIOPS_SMOKE_DIR/app.log" 2>&1 &
+  runtime_pid=$!
+  app_pid=
+  trap 'kill "${app_pid:-}" "$runtime_pid" 2>/dev/null || true' EXIT
+  sleep 10
+  # --appimage-extract-and-run may leave the runtime as a wrapper process.
+  # Identify the actual Go app by its executable and this smoke's unique data
+  # directory instead of assuming $! is the application process.
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    for proc in /proc/[0-9]*; do
+      [ -r "$proc/exe" ] || continue
+      executable=$(readlink -f "$proc/exe" 2>/dev/null || true)
+      case "$executable" in
+        */usr/bin/tamiops) ;;
+        *) continue ;;
+      esac
+      cmdline=$(tr '\000' '\n' < "$proc/cmdline" 2>/dev/null || true)
+      printf '%s\n' "$cmdline" | grep -Fxq -- '--data-dir' || continue
+      printf '%s\n' "$cmdline" | grep -Fxq -- "$data_dir" || continue
+      app_pid=${proc##*/}
+      break
+    done
+    [ -n "$app_pid" ] && break
+    sleep 1
+  done
+  if [ -z "$app_pid" ]; then
     cat "$TAMIOPS_SMOKE_DIR/app.log"
-    echo 'AppImage did not start a WebKit web process' >&2
+    echo 'AppImage did not start the application process with the smoke data directory' >&2
+    exit 1
+  fi
+  executable=$(readlink -f "/proc/$app_pid/exe" 2>/dev/null || true)
+  case "$executable" in
+    */usr/bin/tamiops) ;;
+    *)
+      cat "$TAMIOPS_SMOKE_DIR/app.log"
+      echo "Smoke process is not the tamiops executable: ${executable:-unavailable}" >&2
+      exit 1
+      ;;
+  esac
+  if [ -n "$TAMIOPS_SMOKE_APPARMOR_PROFILE" ]; then
+    profile=$(cat "/proc/$app_pid/attr/current" 2>/dev/null || true)
+    case "$profile" in
+      "$TAMIOPS_SMOKE_APPARMOR_PROFILE"*) ;;
+      *)
+        cat "$TAMIOPS_SMOKE_DIR/app.log"
+        echo "Application process did not enter its exact-path AppArmor profile (current: ${profile:-unavailable})" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  appdir=$(tr '\000' '\n' < "/proc/$app_pid/environ" | sed -n 's/^APPDIR=//p')
+  if [ -z "$appdir" ]; then
+    cat "$TAMIOPS_SMOKE_DIR/app.log"
+    echo 'AppImage process did not expose its APPDIR' >&2
+    exit 1
+  fi
+  bundled_webkit=0
+  for proc in /proc/[0-9]*; do
+    [ -r "$proc/cmdline" ] || continue
+    cmdline=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
+    case "$cmdline" in
+      *WebKitWebProcess*) ;;
+      *) continue ;;
+    esac
+    executable=$(readlink -f "$proc/exe" 2>/dev/null || true)
+    case "$executable" in
+      "$appdir"/*/WebKitWebProcess)
+        bundled_webkit=1
+        break
+        ;;
+    esac
+  done
+  if [ "$bundled_webkit" -ne 1 ]; then
+    cat "$TAMIOPS_SMOKE_DIR/app.log"
+    if [ -n "$TAMIOPS_SMOKE_APPARMOR_PROFILE" ]; then
+      echo "AppImage did not start its bundled WebKitWebProcess under $appdir in the expected AppArmor profile" >&2
+    else
+      echo "AppImage did not start its bundled WebKitWebProcess under $appdir" >&2
+    fi
+    pgrep -af '[W]ebKitWebProcess' >&2 || true
     exit 1
   fi
   echo 'AppImage desktop and WebKit process started successfully.'

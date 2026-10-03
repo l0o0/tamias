@@ -36,4 +36,5 @@ if [ -d "$APPDIR/apprun-hooks" ]; then
     done
 fi
 
+cd "$APPDIR/usr"
 exec "$APPDIR/usr/bin/tamiops" "$@"

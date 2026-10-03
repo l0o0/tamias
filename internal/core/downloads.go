@@ -175,7 +175,8 @@ func (s *Service) StartDownload(ctx context.Context, connection, key, destinatio
 		return DownloadTransfer{}, errors.New("续传下载需要普通文件、大小及可靠版本")
 	}
 	p := s.Preferences()
-	if e.Size > p.MaxFileBytes || e.Size+directorySize(filepath.Join(s.dir, "staging")) > p.StagingBytes || freeBytes(s.dir)-e.Size < 256<<20 {
+	staged, reserved := s.stagingUsage()
+	if e.Size > p.MaxFileBytes || staged > p.StagingBytes || e.Size > p.StagingBytes-staged || freeBytes(s.dir)-reserved-e.Size < 256<<20 {
 		return DownloadTransfer{}, errors.New("文件超过暂存额度或磁盘可用空间")
 	}
 	f, err := os.CreateTemp(filepath.Join(s.dir, "staging"), "download-*")
@@ -249,7 +250,8 @@ func (s *Service) continueDownload(ctx context.Context, d DownloadTransfer) (Dow
 	}
 	remaining := d.Size - d.Received
 	p := s.Preferences()
-	if d.Size > p.MaxFileBytes || directorySize(filepath.Join(s.dir, "staging"))+remaining > p.StagingBytes || freeBytes(s.dir)-remaining < 256<<20 {
+	staged, reserved := s.stagingUsage()
+	if d.Size > p.MaxFileBytes || staged > p.StagingBytes || remaining > p.StagingBytes-staged || freeBytes(s.dir)-reserved-remaining < 256<<20 {
 		return d, errors.New("磁盘或暂存额度不足，下载保持暂停")
 	}
 	f, err := os.OpenFile(d.Staging, os.O_RDWR, 0600)
@@ -261,7 +263,13 @@ func (s *Service) continueDownload(ctx context.Context, d DownloadTransfer) (Dow
 	if err != nil {
 		return d, err
 	}
-	defer release()
+	reservationReleased := false
+	defer func() {
+		if !reservationReleased {
+			_ = f.Close()
+			release()
+		}
+	}()
 	hasher := sha256.New()
 	if _, err = io.Copy(hasher, io.NewSectionReader(f, 0, d.Received)); err != nil {
 		return d, err
@@ -332,6 +340,9 @@ func (s *Service) continueDownload(ctx context.Context, d DownloadTransfer) (Dow
 		if err = s.saveDownload(d); err != nil {
 			return d, err
 		}
+		_ = f.Close()
+		release()
+		reservationReleased = true
 		_ = os.Remove(d.Staging)
 		return d, nil
 	}
@@ -347,6 +358,9 @@ func (s *Service) continueDownload(ctx context.Context, d DownloadTransfer) (Dow
 	if err = s.saveDownload(d); err != nil {
 		return d, err
 	}
+	_ = f.Close()
+	release()
+	reservationReleased = true
 	_ = os.Remove(d.Staging)
 	return d, nil
 }

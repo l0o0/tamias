@@ -223,6 +223,7 @@ func (s *Service) ResumeUpload(ctx context.Context, id string) (storage.Entry, e
 	entry, opErr := s.continueMultipart(commit, mp, u, f)
 	err = s.finish(id, "upload", u.Path, entry, opErr)
 	if err == nil {
+		_ = f.Close()
 		_ = os.Remove(u.Staging)
 	}
 	return entry, err

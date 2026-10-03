@@ -40,3 +40,5 @@ source PACKAGE=VERSION` with the recorded source package and source version.
 
 AppImage bundling does not remove or disable WebKitGTK's process sandbox. The
 system base ABI (including glibc) remains provided by the host distribution.
+The bundled GTK hook selects the X11 backend. Wayland desktops therefore need
+XWayland; a Wayland-only session is not currently supported.

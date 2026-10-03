@@ -7,7 +7,7 @@
 1. 更新版本对应的 `docs/releases/<version>.md`，提交源码、许可证与文档。
 2. 在 GitHub Actions 运行 **Release installers**，填写不带 `v` 的版本，例如 `0.2.0-beta.1`；也可推送相应的 `v*` 标签触发。
 3. 工作流执行 Go 竞态测试、静态检查、前端类型检查和构建，然后制作安装包。
-4. macOS 检查包内容、签名并在临时 CI 主机安装；Windows 执行安装、原生启动、版本及卸载检查；Linux 验证 AppImage 中的程序和 WebKit 进程启动。
+4. macOS 检查包内容、验证应用的 ad-hoc 签名，并在临时 CI 主机安装；Windows 执行安装、原生启动、版本及卸载检查；Linux 验证 AppImage 中的程序和 WebKit 进程启动。
 5. 全部构建与验证通过后创建 **Draft Release**，附四个安装包与 `SHA256SUMS.txt`。核对产物与说明后发布草稿。
 
 草稿重跑仅允许同一源码提交，已发布版本不会被覆盖。应为修改后的已发布内容使用新版本号。

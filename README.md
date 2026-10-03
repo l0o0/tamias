@@ -21,6 +21,10 @@ chmod +x tamiops-*-linux-amd64.AppImage
 ./tamiops-0.2.0-beta.1-linux-amd64.AppImage
 ```
 
+没有 FUSE 的 Linux 环境可改用 `./tamiops-0.2.0-beta.1-linux-amd64.AppImage --appimage-extract-and-run`。
+
+Linux 需要 X11 / XWayland 和允许 WebKit 沙箱运行的用户命名空间；Ubuntu 的 AppArmor 配置及其他依赖见 [Linux 使用说明](docs/linux.md)。
+
 首版为预发布版本。Windows 安装器未签名，macOS 安装器未签名或公证，系统可能提示未知发布者或阻止直接打开。安装包、校验值与具体要求见对应 Release；更新前请退出旧版本。
 
 ## 功能

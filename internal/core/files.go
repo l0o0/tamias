@@ -193,10 +193,11 @@ func (s *Service) spool(ctx context.Context, r io.Reader, size int64) (*os.File,
 	if err != nil {
 		return nil, err
 	}
+	stagingPath := f.Name()
 	writer, release, err := s.reserveStaging(f, limit)
 	if err != nil {
 		f.Close()
-		_ = os.Remove(f.Name())
+		_ = os.Remove(stagingPath)
 		return nil, err
 	}
 	defer release()
@@ -215,10 +216,19 @@ func (s *Service) spool(ctx context.Context, r io.Reader, size int64) (*os.File,
 	}
 	if err != nil {
 		f.Close()
-		os.Remove(f.Name())
+		_ = os.Remove(stagingPath)
 		return nil, err
 	}
-	return f, nil
+	if err = f.Close(); err != nil {
+		_ = os.Remove(stagingPath)
+		return nil, err
+	}
+	staged, err := os.Open(stagingPath)
+	if err != nil {
+		_ = os.Remove(stagingPath)
+		return nil, err
+	}
+	return staged, nil
 }
 func (s *Service) backup(ctx context.Context, st storage.Store, connectionID, key string, old storage.Entry, op string) error {
 	prefs := s.Preferences()
@@ -420,9 +430,9 @@ func (b Backend) put(ctx context.Context, key string, r io.Reader, size int64, c
 	if err != nil {
 		return storage.Entry{}, err
 	}
-	defer f.Close()
 	remove := true
 	defer func() {
+		_ = f.Close()
 		if remove {
 			_ = os.Remove(f.Name())
 		}

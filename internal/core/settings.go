@@ -96,7 +96,7 @@ func (s *Service) SetPreferences(p Preferences) error {
 	preferencesUpdateMu.Lock()
 	defer preferencesUpdateMu.Unlock()
 	checkBudget := func(old Preferences) error {
-		if p.StagingBytes < directorySize(filepath.Join(s.dir, "staging"))+s.stagingReservedLocked() || p.RecoveryBytes < directorySize(filepath.Join(s.dir, "recovery")) {
+		if p.StagingBytes < s.stagingBytesLocked("") || p.RecoveryBytes < directorySize(filepath.Join(s.dir, "recovery")) {
 			return errors.New("额度不能低于现有受保护数据，请先检查恢复与未决操作")
 		}
 		if len(s.stagingReservations) > 0 && p.MaxFileBytes != old.MaxFileBytes {
@@ -437,7 +437,7 @@ func (s *Service) ImportConfiguration(in ConfigurationExport) (map[string]int, e
 	defer s.writes.Unlock()
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
-	if p.StagingBytes < directorySize(filepath.Join(s.dir, "staging"))+s.stagingReservedLocked() || p.RecoveryBytes < directorySize(filepath.Join(s.dir, "recovery")) {
+	if p.StagingBytes < s.stagingBytesLocked("") || p.RecoveryBytes < directorySize(filepath.Join(s.dir, "recovery")) {
 		return nil, errors.New("导入额度小于现有受保护数据")
 	}
 	s.mu.Lock()
