@@ -13,7 +13,7 @@
 | 系统 | 格式 | 使用方式 |
 | --- | --- | --- |
 | Windows x64 | ".exe" 安装程序 | 按向导安装；需要 WebView2 Runtime |
-| macOS Apple Silicon / Intel | ".pkg" 安装程序 | 按芯片选择安装包，安装到“应用程序” |
+| macOS 12+，Apple Silicon / Intel | `.pkg` 安装程序 | 按芯片选择安装包，安装到“应用程序” |
 | Linux x64 | ".AppImage" | 添加执行权限后直接运行，要求 glibc 2.39+ |
 
 ```sh

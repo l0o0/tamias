@@ -289,34 +289,56 @@ done
 collect_package_notices() {
     local doc_dir="$APP_DIR/usr/share/doc/tamiops/system-dependencies"
     local manifest="$doc_dir/packages.tsv"
-    local package source_path owner_output owner_line pkg metadata version source_pkg source_version pkg_doc out_dir
+    local package deployed rel source_path owner_output owner_line pkg metadata version source_pkg source_version pkg_doc out_dir candidate canonical multiarch rest
     declare -A packages=()
+    declare -a source_candidates=()
+    multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
     mkdir -p -- "$doc_dir"
 
-    # linuxdeploy preserves system paths for deployed libraries/resources. Resolve
-    # each copied system file back to its owning Ubuntu binary package.
+    # Resolve deployed files using their original system path. linuxdeploy may
+    # flatten multiarch libraries into usr/lib, so try only deterministic
+    # system-library locations for those entries; never infer ownership from
+    # an arbitrary same-basename file elsewhere on the host.
     while IFS= read -r -d '' deployed; do
         case "$deployed" in
             "$APP_DIR"/usr/lib/*|"$APP_DIR"/usr/libexec/*|"$APP_DIR"/usr/share/*) ;;
             *) continue ;;
         esac
-        source_path="/${deployed#"$APP_DIR"/}"
-        if [[ -e "$source_path" || -L "$source_path" ]]; then
-            owner_output="$(dpkg-query -S -- "$source_path" 2>/dev/null || true)"
-        else
-            owner_output=""
-        fi
-        if [[ -z "$owner_output" ]]; then
-            source_path="$(realpath -e -- "$source_path" 2>/dev/null || true)"
-            if [[ -n "$source_path" ]]; then
-                owner_output="$(dpkg-query -S -- "$source_path" 2>/dev/null || true)"
+        rel="/${deployed#"$APP_DIR"/}"
+        source_candidates=("$rel")
+        case "$rel" in
+            /usr/lib/*)
+                rest="${rel#/usr/lib/}"
+                if [[ "$rest" != "$multiarch/"* ]]; then
+                    source_candidates+=(
+                        "/usr/lib/$multiarch/$rest"
+                        "/lib/$multiarch/$rest"
+                        "/usr/lib64/$rest"
+                        "/lib64/$rest"
+                    )
+                fi
+                ;;
+        esac
+        owner_output=""
+        for candidate in "${source_candidates[@]}"; do
+            case "$candidate" in
+                /usr/lib/*|/usr/libexec/*|/usr/share/*|/usr/lib64/*|/lib/*|/lib64/*) ;;
+                *) continue ;;
+            esac
+            [[ -e "$candidate" || -L "$candidate" ]] || continue
+            owner_output="$(dpkg-query -S -- "$candidate" 2>/dev/null || true)"
+            if [[ -z "$owner_output" ]]; then
+                canonical="$(realpath -e -- "$candidate" 2>/dev/null || true)"
+                case "$canonical" in
+                    /usr/lib/*|/usr/libexec/*|/usr/share/*|/usr/lib64/*|/lib/*|/lib64/*)
+                        if [[ -n "$canonical" ]]; then
+                            owner_output="$(dpkg-query -S -- "$canonical" 2>/dev/null || true)"
+                        fi
+                        ;;
+                esac
             fi
-        fi
-        if [[ -z "$owner_output" ]]; then
-            # linuxdeploy commonly flattens library trees into usr/lib. Search
-            # the installed package database by basename as a fallback.
-            owner_output="$(dpkg-query -S -- "*/${deployed##*/}" 2>/dev/null || true)"
-        fi
+            [[ -n "$owner_output" ]] && break
+        done
         while IFS= read -r owner_line; do
             [[ -n "$owner_line" ]] || continue
             pkg="${owner_line%%: *}"

@@ -2,8 +2,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 . scripts/build-env.sh
-export CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=11.0"
-export CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=11.0"
+export CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=12.0"
+export CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=12.0"
 npm --prefix frontend run build
 app=bin/tamiops.app
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -25,7 +25,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleIconFile</key><string>app.icns</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
-<key>LSMinimumSystemVersion</key><string>11.0</string>
+<key>LSMinimumSystemVersion</key><string>12.0</string>
 </dict></plist>
 PLIST
 iconset="$app/Contents/Resources/app.iconset"

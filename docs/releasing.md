@@ -39,7 +39,7 @@ bash scripts/build-desktop.sh
 
 `LICENSE` 和 `THIRD_PARTY_NOTICES.txt` 随安装包分发。更新应用依赖后，在 `make setup` 完成的环境执行 `python3 scripts/generate-notices.py`，并提交更新后的声明。AppImage 另在 `usr/share/doc` 保存打包运行库的声明。
 
-macOS 使用系统 WebKit，Windows 使用系统 WebView2；Linux AppImage 打包 GTK / WebKit 组件，但仍依赖目标系统的内核、glibc、显示与凭据服务。当前构建基线是 Ubuntu 24.04 / glibc 2.39，不承诺在更旧的 Linux 发行版运行。
+macOS 使用系统 WebKit，最低版本与 [Go 1.25 的 macOS 12 要求](https://go.dev/doc/go1.25#darwin)一致。Windows 使用系统 WebView2；Linux AppImage 打包 GTK / WebKit 组件，但仍依赖目标系统的内核、glibc、显示、沙箱工具与凭据服务，详见 [Linux 使用说明](linux.md)。当前构建基线是 Ubuntu 24.04 / glibc 2.39，不承诺在更旧的 Linux 发行版运行。
 
 ## 签名
 

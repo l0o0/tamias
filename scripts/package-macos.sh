@@ -91,7 +91,7 @@ cat > "$stage/requirements.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>os</key>
-  <array><string>11.0</string></array>
+  <array><string>12.0</string></array>
   <key>arch</key>
   <array><string>$pkg_arch</string></array>
 </dict>
