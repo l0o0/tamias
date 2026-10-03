@@ -36,7 +36,7 @@ fi
 [[ "$DISTRO_ID" == "ubuntu" && "$DISTRO_VERSION_ID" == "24.04" ]] || \
     die "packaging is pinned to Ubuntu 24.04; found $DISTRO_PRETTY_NAME"
 
-for tool in curl sha256sum ldd readelf file pkg-config dpkg-query dpkg-architecture desktop-file-validate find realpath patchelf python3; do
+for tool in curl sha256sum ldd readelf file pkg-config dpkg-query dpkg-architecture desktop-file-validate find realpath patchelf cc; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is missing: $tool"
 done
 
@@ -47,6 +47,7 @@ APP_LICENSE="$ROOT_DIR/LICENSE"
 APP_NOTICES="$ROOT_DIR/THIRD_PARTY_NOTICES.txt"
 GTK_PLUGIN="$ROOT_DIR/build/linux/linuxdeploy-plugin-gtk.sh"
 APP_RUN="$ROOT_DIR/build/linux/AppRun"
+WEBKIT_PATH_SHIM_SOURCE="$ROOT_DIR/build/linux/webkit-path-shim.c"
 [[ -x "$APP_BINARY" ]] || die "built Linux binary is missing or not executable: $APP_BINARY"
 [[ -s "$ICON" ]] || die "application icon is missing or empty: $ICON"
 [[ -s "$DESKTOP" ]] || die "desktop entry is missing or empty: $DESKTOP"
@@ -54,6 +55,7 @@ APP_RUN="$ROOT_DIR/build/linux/AppRun"
 [[ -s "$APP_NOTICES" ]] || die "root THIRD_PARTY_NOTICES.txt is missing or empty"
 [[ -s "$GTK_PLUGIN" ]] || die "vendored GTK plugin is missing"
 [[ -s "$APP_RUN" ]] || die "project AppRun launcher is missing"
+[[ -s "$WEBKIT_PATH_SHIM_SOURCE" ]] || die "WebKit sandbox path shim source is missing"
 
 readelf -h "$APP_BINARY" | grep -Eq 'Class:[[:space:]]+ELF64' || die "binary is not ELF64: $APP_BINARY"
 readelf -h "$APP_BINARY" | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' || die "binary is not x86_64: $APP_BINARY"
@@ -185,10 +187,7 @@ find_webkit_file libwebkitgtkinjectedbundle.so yes
 
 WEBKIT_EXEC_PATH_REL="${WEBKIT_EXECUTABLES[0]#"$APP_DIR"/}"
 WEBKIT_EXEC_PATH_REL="${WEBKIT_EXEC_PATH_REL%/*}"
-WEBKIT_SOURCE_EXEC_REL="${WEBKIT_EXEC_PATH_REL#usr/}"
-WEBKIT_SOURCE_EXEC_PATH="/usr/$WEBKIT_SOURCE_EXEC_REL"
-[[ "$WEBKIT_SOURCE_EXEC_PATH" == "$WEBKIT_SOURCE_EXEC_DIR" ]] || \
-    die "WebKit helper install path is unexpected: $WEBKIT_SOURCE_EXEC_DIR (expected $WEBKIT_SOURCE_EXEC_PATH)"
+WEBKIT_SOURCE_EXEC_PATH="$WEBKIT_SOURCE_EXEC_DIR"
 for helper in "${WEBKIT_EXECUTABLES[@]}"; do
     helper_dir="${helper%/*}"
     [[ "$helper_dir" == "$APP_DIR/$WEBKIT_EXEC_PATH_REL" ]] || \
@@ -196,7 +195,7 @@ for helper in "${WEBKIT_EXECUTABLES[@]}"; do
 done
 WEBKIT_BUNDLE_PATH_REL="${WEBKIT_LIBRARIES[0]#"$APP_DIR"/}"
 WEBKIT_BUNDLE_PATH_REL="${WEBKIT_BUNDLE_PATH_REL%/*}"
-printf '%s\n%s\n' "$WEBKIT_EXEC_PATH_REL" "$WEBKIT_BUNDLE_PATH_REL" > "$APP_DIR/.tamiops-webkit-paths"
+printf '%s\n%s\n%s\n' "$WEBKIT_EXEC_PATH_REL" "$WEBKIT_BUNDLE_PATH_REL" "$WEBKIT_SOURCE_EXEC_PATH" > "$APP_DIR/.tamiops-webkit-paths"
 
 # WebKitGTK ships translated strings outside the shared object. Include them
 # along with any optional versioned data tree present in Ubuntu's runtime pkg.
@@ -237,42 +236,16 @@ done
 LINUXDEPLOY_ARGS+=(--plugin gtk)
 APPIMAGE_EXTRACT_AND_RUN=1 "$LINUXDEPLOY" "${LINUXDEPLOY_ARGS[@]}"
 
-# WebKit's production process lookup uses the build-time absolute PKGLIBEXECDIR;
-# WEBKIT_EXEC_PATH is only consulted in developer-mode builds. Patch the copied
-# WebKitGTK library path to an equal-length relative path and run from AppDir/usr
-# so the WebKit process lookup remains inside this AppImage on release builds.
-WEBKIT_RELOCATABLE_EXEC_PATH="././/$WEBKIT_SOURCE_EXEC_REL"
-[[ ${#WEBKIT_SOURCE_EXEC_PATH} -eq ${#WEBKIT_RELOCATABLE_EXEC_PATH} ]] || \
-    die "cannot safely relocate WebKit process path; source and replacement lengths differ"
-python3 - "$APP_DIR/usr/lib" "$WEBKIT_SOURCE_EXEC_PATH" "$WEBKIT_RELOCATABLE_EXEC_PATH" <<'PY'
-import os
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-old = os.fsencode(sys.argv[2])
-new = os.fsencode(sys.argv[3])
-if len(old) != len(new):
-    raise SystemExit("WebKit relocation must preserve the ELF string length")
-replacements = 0
-patched_files = []
-for path in root.rglob('*'):
-    if not path.is_file():
-        continue
-    try:
-        data = path.read_bytes()
-    except OSError:
-        continue
-    if not data.startswith(b'\x7fELF') or old not in data:
-        continue
-    count = data.count(old)
-    path.write_bytes(data.replace(old, new))
-    replacements += count
-    patched_files.append(str(path))
-if replacements == 0:
-    raise SystemExit(f"no deployed WebKit ELF contained PKGLIBEXECDIR {os.fsdecode(old)}")
-print(f"Relocated WebKit process path in {replacements} ELF string(s): {', '.join(patched_files)}")
-PY
+# WebKit's release helper lookup is a compiled absolute path, while the AppDir
+# lives under a per-run FUSE mount. The launcher shim changes only the three
+# exact WebKit helper argv values to their AppDir paths. Bubblewrap's own
+# LD_LIBRARY_PATH bind handling then exposes the bundled usr/lib subtree at the
+# same absolute path inside the namespace; no sandbox flags are changed.
+WEBKIT_PATH_SHIM="$APP_DIR/usr/lib/libtamiops-webkit-paths.so"
+mkdir -p -- "${WEBKIT_PATH_SHIM%/*}"
+cc -shared -fPIC -O2 -Wall -Wextra -Werror -Wl,-z,relro,-z,now \
+    -o "$WEBKIT_PATH_SHIM" "$WEBKIT_PATH_SHIM_SOURCE" -ldl
+[[ -s "$WEBKIT_PATH_SHIM" ]] || die "WebKit path shim compilation produced no output"
 for elf in "$APP_DIR/usr/bin/tamiops" "${WEBKIT_EXECUTABLES[@]}" "${WEBKIT_LIBRARIES[@]}"; do
     if [[ "$elf" != "$APP_DIR/usr/bin/tamiops" ]]; then
         # linuxdeploy can also create a flattened usr/bin copy for the

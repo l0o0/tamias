@@ -25,9 +25,35 @@ func Open(filename string) error {
 		cmd = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", absolute)
 	default:
 		cmd = exec.Command("xdg-open", absolute)
+		cmd.Env = externalEnvironment()
 	}
 	return cmd.Run()
 }
+
+// AppImage's private loader paths are for tamiops and WebKit, not the user's
+// external editor. Restore the caller's loader settings before invoking it.
+func externalEnvironment() []string {
+	env := os.Environ()
+	if os.Getenv("TAMIOPS_WEBKIT_SOURCE_EXEC_DIR") == "" {
+		return env
+	}
+	result := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "LD_LIBRARY_PATH", "LD_PRELOAD", "APPDIR", "APPIMAGE", "WEBKIT_EXEC_PATH", "WEBKIT_INJECTED_BUNDLE_PATH", "TAMIOPS_WEBKIT_SOURCE_EXEC_DIR", "TAMIOPS_ORIGINAL_LD_LIBRARY_PATH", "TAMIOPS_ORIGINAL_LD_PRELOAD":
+			continue
+		}
+		result = append(result, entry)
+	}
+	for _, key := range []string{"LD_LIBRARY_PATH", "LD_PRELOAD"} {
+		if value := os.Getenv("TAMIOPS_ORIGINAL_" + key); value != "" {
+			result = append(result, key+"="+value)
+		}
+	}
+	return result
+}
+
 func SetAutoStart(enabled bool, dataDir string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -62,6 +88,14 @@ func SetAutoStart(enabled bool, dataDir string) error {
 	executable, err := os.Executable()
 	if err != nil {
 		return err
+	}
+	// The executable inside an AppImage lives at a temporary mount/extraction
+	// path. Autostart must invoke the original, persistent AppImage file.
+	if runtime.GOOS == "linux" && os.Getenv("APPDIR") != "" && os.Getenv("APPIMAGE") != "" {
+		executable, err = filepath.Abs(os.Getenv("APPIMAGE"))
+		if err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(dataDir) == "" {
 		return errors.New("数据目录不能为空")

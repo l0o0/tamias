@@ -39,6 +39,10 @@ Ubuntu 24.04 these source packages are available from the corresponding Ubuntu
 source PACKAGE=VERSION` with the recorded source package and source version.
 
 AppImage bundling does not remove or disable WebKitGTK's process sandbox. The
-system base ABI (including glibc) remains provided by the host distribution.
+system base ABI (including glibc) remains provided by the host distribution. A
+small AGPL-3.0-only launcher shim rewrites only WebKit's exact compiled
+WebProcess, NetworkProcess, and optional GPUProcess paths to the copies in this
+AppDir. AppRun exposes the bundled usr/lib path to WebKit's existing read-only
+Bubblewrap bind handling; no WebKit sandbox flags are changed.
 The bundled GTK hook selects the X11 backend. Wayland desktops therefore need
 XWayland; a Wayland-only session is not currently supported.

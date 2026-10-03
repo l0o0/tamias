@@ -2,9 +2,36 @@ package desktop
 
 import (
 	"encoding/xml"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestExternalEditorDoesNotInheritAppImageLoader(t *testing.T) {
+	t.Setenv("TAMIOPS_WEBKIT_SOURCE_EXEC_DIR", "/usr/lib/webkitgtk-6.0")
+	t.Setenv("APPDIR", "/tmp/appimage")
+	t.Setenv("APPIMAGE", "/home/user/tamiops.AppImage")
+	t.Setenv("LD_LIBRARY_PATH", "/tmp/appimage/usr/lib")
+	t.Setenv("LD_PRELOAD", "/tmp/appimage/usr/lib/path-shim.so")
+	t.Setenv("WEBKIT_EXEC_PATH", "/tmp/appimage/usr/lib/webkitgtk-6.0")
+	t.Setenv("WEBKIT_INJECTED_BUNDLE_PATH", "/tmp/appimage/usr/lib/injected-bundle")
+	t.Setenv("TAMIOPS_ORIGINAL_LD_LIBRARY_PATH", "/opt/user/lib")
+	t.Setenv("TAMIOPS_ORIGINAL_LD_PRELOAD", "")
+	t.Setenv("DISPLAY", ":42")
+	values := make(map[string]string)
+	for _, entry := range externalEnvironment() {
+		key, value, _ := strings.Cut(entry, "=")
+		values[key] = value
+	}
+	if values["LD_LIBRARY_PATH"] != "/opt/user/lib" || values["DISPLAY"] != os.Getenv("DISPLAY") {
+		t.Fatal("external editor lost the caller's library or display settings")
+	}
+	for _, key := range []string{"LD_PRELOAD", "APPDIR", "APPIMAGE", "WEBKIT_EXEC_PATH", "WEBKIT_INJECTED_BUNDLE_PATH", "TAMIOPS_WEBKIT_SOURCE_EXEC_DIR"} {
+		if _, exists := values[key]; exists {
+			t.Fatalf("external editor inherited AppImage setting %s", key)
+		}
+	}
+}
 
 func TestAutoStartContentCarriesDataDirectory(t *testing.T) {
 	executable := "/Applications/tamiops.app/Contents/MacOS/tamiops"

@@ -122,28 +122,24 @@ xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
     exit 1
   fi
   bundled_webkit=0
+  bundled_network=0
   for proc in /proc/[0-9]*; do
     [ -r "$proc/cmdline" ] || continue
     cmdline=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
     case "$cmdline" in
-      *WebKitWebProcess*) ;;
+      *WebKitWebProcess*|*WebKitNetworkProcess*) ;;
       *) continue ;;
     esac
     executable=$(readlink -f "$proc/exe" 2>/dev/null || true)
     case "$executable" in
-      "$appdir"/*/WebKitWebProcess)
-        bundled_webkit=1
-        break
-        ;;
+      "$appdir"/*/WebKitWebProcess) bundled_webkit=1 ;;
+      "$appdir"/*/WebKitNetworkProcess) bundled_network=1 ;;
     esac
+    [ "$bundled_webkit" -eq 1 ] && [ "$bundled_network" -eq 1 ] && break
   done
-  if [ "$bundled_webkit" -ne 1 ]; then
+  if [ "$bundled_webkit" -ne 1 ] || [ "$bundled_network" -ne 1 ]; then
     cat "$TAMIOPS_SMOKE_DIR/app.log"
-    if [ -n "$TAMIOPS_SMOKE_APPARMOR_PROFILE" ]; then
-      echo "AppImage did not start its bundled WebKitWebProcess under $appdir in the expected AppArmor profile" >&2
-    else
-      echo "AppImage did not start its bundled WebKitWebProcess under $appdir" >&2
-    fi
+    echo "AppImage did not start both bundled WebKitWebProcess and WebKitNetworkProcess under $appdir (web=$bundled_webkit network=$bundled_network)" >&2
     pgrep -af '[W]ebKitWebProcess' >&2 || true
     exit 1
   fi

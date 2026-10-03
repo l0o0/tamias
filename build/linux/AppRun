@@ -5,6 +5,7 @@ if [ -z "${APPDIR:-}" ]; then
     echo "AppImage runtime did not set APPDIR" >&2
     exit 1
 fi
+export APPDIR
 
 # The pinned GTK hook appends the caller's existing data paths.
 XDG_DATA_DIRS="${XDG_DATA_DIRS:-}"
@@ -15,14 +16,16 @@ export XDG_DATA_DIRS
 if [ -r "$APPDIR/.tamiops-webkit-paths" ]; then
     WEBKIT_EXEC_PATH_REL=
     WEBKIT_INJECTED_BUNDLE_PATH_REL=
+    TAMIOPS_WEBKIT_SOURCE_EXEC_DIR=
     {
         IFS= read -r WEBKIT_EXEC_PATH_REL || true
         IFS= read -r WEBKIT_INJECTED_BUNDLE_PATH_REL || true
+        IFS= read -r TAMIOPS_WEBKIT_SOURCE_EXEC_DIR || true
     } < "$APPDIR/.tamiops-webkit-paths"
-    if [ -n "$WEBKIT_EXEC_PATH_REL" ] && [ -n "$WEBKIT_INJECTED_BUNDLE_PATH_REL" ]; then
+    if [ -n "$WEBKIT_EXEC_PATH_REL" ] && [ -n "$WEBKIT_INJECTED_BUNDLE_PATH_REL" ] && [ -n "$TAMIOPS_WEBKIT_SOURCE_EXEC_DIR" ]; then
         WEBKIT_EXEC_PATH="$APPDIR/$WEBKIT_EXEC_PATH_REL"
         WEBKIT_INJECTED_BUNDLE_PATH="$APPDIR/$WEBKIT_INJECTED_BUNDLE_PATH_REL"
-        export WEBKIT_EXEC_PATH WEBKIT_INJECTED_BUNDLE_PATH
+        export WEBKIT_EXEC_PATH WEBKIT_INJECTED_BUNDLE_PATH TAMIOPS_WEBKIT_SOURCE_EXEC_DIR
     fi
 fi
 
@@ -36,5 +39,18 @@ if [ -d "$APPDIR/apprun-hooks" ]; then
     done
 fi
 
-cd "$APPDIR/usr"
+# Keep WebKit's AppDir library subtree visible inside Bubblewrap. The path shim
+# rewrites only its exact compiled helper argv values to this same AppDir.
+WEBKIT_PATH_SHIM="$APPDIR/usr/lib/libtamiops-webkit-paths.so"
+if [ ! -r "$WEBKIT_PATH_SHIM" ]; then
+    echo "WebKit sandbox helper path shim is missing: $WEBKIT_PATH_SHIM" >&2
+    exit 1
+fi
+TAMIOPS_ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+TAMIOPS_ORIGINAL_LD_PRELOAD="${LD_PRELOAD:-}"
+LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+LD_PRELOAD="$WEBKIT_PATH_SHIM${LD_PRELOAD:+:$LD_PRELOAD}"
+export TAMIOPS_ORIGINAL_LD_LIBRARY_PATH TAMIOPS_ORIGINAL_LD_PRELOAD
+export LD_LIBRARY_PATH LD_PRELOAD
+
 exec "$APPDIR/usr/bin/tamiops" "$@"
