@@ -1,14 +1,16 @@
-# tamiops
+# 小花鼠（Tamias）
 
 轻量的 WebDAV / S3 桌面客户端，支持文件同步、备份恢复，以及将 S3 存储通过 WebDAV 提供给其他应用。
 
 基于 Go、Wails 和 Vue 构建。当前版本为 **0.2.0-beta.1**。
 
-![tamiops 桌面界面](docs/assets/tamiops-integrated-titlebar.png)
+![小花鼠（Tamias）桌面界面](docs/assets/tamiops-integrated-titlebar.png)
 
 ## 下载与安装
 
 从 [GitHub Releases](https://github.com/l0o0/tamiops/releases) 下载对应系统的安装包：
+
+中文名称为 **小花鼠**，英文名称为 **Tamias**。GitHub 仓库为 `l0o0/tamiops`。已发布的 `0.2.0-beta.1` 安装包沿用旧名称 `tamiops`，下方下载运行示例保留该版本的实际文件名；后续安装包使用 `tamias` 前缀。
 
 | 系统 | 格式 | 使用方式 |
 | --- | --- | --- |
@@ -59,20 +61,20 @@ make build
 
 | 平台 | 构建产物 | 验证状态 |
 | --- | --- | --- |
-| macOS | `bin/tamiops.app` | Apple Silicon 已实机验证；本机构建使用 ad-hoc 签名，未公证 |
-| Windows | `bin/tamiops.exe` | 提供构建配置，桌面交互待验证 |
-| Linux | `bin/tamiops/tamiops` | 提供构建配置，桌面交互待验证 |
+| macOS | `bin/tamias.app` | Apple Silicon 已实机验证；本机构建使用 ad-hoc 签名，未公证 |
+| Windows | `bin/tamias.exe` | 提供构建配置，桌面交互待验证 |
+| Linux | `bin/tamias/tamias` | 提供构建配置，桌面交互待验证 |
 
 macOS 启动：
 
 ```sh
-open bin/tamiops.app
+open bin/tamias.app
 ```
 
 ### 首次使用
 
 1. 在“设置”添加 WebDAV 或 S3 连接，填写地址及凭据。
-2. 需要上传、同步或启用读写网关时，先执行“验证读写”。验证会创建并清理临时探测对象。
+2. 添加连接时自动检测并保存服务能力，连接成功后即可上传和同步；同名文件按原路径更新。严格防覆盖与读写网关按实际检测到的能力启用。
 3. 在“任务”选择本地目录和远端路径，预览同步计划，再执行同步。
 4. 需要为其他应用提供 WebDAV 时，在“网关”创建入口；默认仅监听本机，局域网访问需配置 TLS。
 
@@ -82,16 +84,19 @@ open bin/tamiops.app
 
 ```sh
 make cli
-bin/cli/tamiops -data-dir ./tamiops-state status
-bin/cli/tamiops -data-dir ./tamiops-state diagnostics
+bin/cli/tamias -data-dir ./tamias-state status
+bin/cli/tamias -data-dir ./tamias-state diagnostics
 ```
 
 CLI 支持配置导入导出、连接管理、同步预览与执行，以及无界面网关服务。参数放在子命令前；同一数据目录仅允许一个进程使用。完整用法见 [CLI 指南](docs/cli.md)。
 
+改名继续使用既有 `Tami` 数据目录、`io.tamiops.tami` 应用与凭据库标识、登录启动注册文件、`X-Tami-Client` 请求头和 `.tamiops-backup` 备份格式。已有配置与凭据无需迁移；源码 Go module 和 `cmd/tami` 入口保持兼容。CLI 凭据密钥优先读取 `TAMIAS_VAULT_KEY`，同时兼容旧变量。
+
 ## 使用限制
 
-- 增量同步以文件为单位，不包含块级去重、虚拟磁盘或占位文件。
-- 写入能力取决于后端的条件请求支持；不满足安全条件的操作会被拒绝，重启后需重新验证写入能力。
+- 增量同步以文件为单位，不包含块级去重、虚拟磁盘或占位文件。自动跳过 macOS 的 `.DS_Store` 目录信息文件；其他隐藏文件仍按任务规则同步。
+- 默认按原路径同步新增与修改的文件。自动保留恢复副本默认关闭，可在连接的高级设置中开启；严格防覆盖、仅上传为新副本也在高级设置中选择。
+- 不支持条件请求的服务采用版本预检与写后回读校验，无法保证阻止其他客户端同时覆盖。远端删除、移动、备份、迁移及可写网关仍需服务端条件支持；双方都修改的文件会提示冲突。重启后需重新验证连接。
 - WebDAV 网关提供常用方法的受限实现，不支持完整 `PROPPATCH` 和所有锁条件组合；具体服务商与第三方客户端兼容性需单独验证。
 - 备份为逐文件快照，不保证运行中数据库的应用一致性。移动及目录操作不保证跨文件原子性。
 - 默认单文件上限为 **128 MiB**，可在设置中调整；单次扫描上限为 **10,000 条目**。

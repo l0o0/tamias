@@ -12,11 +12,11 @@ if ($arch -ne 'amd64') {
 }
 
 $requiredFiles = @(
-    (Join-Path $repoRoot 'bin\tamiops.exe'),
+    (Join-Path $repoRoot 'bin\tamias.exe'),
     (Join-Path $repoRoot 'LICENSE'),
     (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.txt'),
-    (Join-Path $repoRoot 'build\windows\tamiops.ico'),
-    (Join-Path $repoRoot 'build\windows\tamiops.iss')
+    (Join-Path $repoRoot 'build\windows\tamias.ico'),
+    (Join-Path $repoRoot 'build\windows\tamias.iss')
 )
 foreach ($path in $requiredFiles) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -40,7 +40,7 @@ if (-not $iscc) {
 }
 
 $distDir = Join-Path $repoRoot 'dist'
-$outputPath = Join-Path $distDir "tamiops-$version-windows-$arch-setup.exe"
+$outputPath = Join-Path $distDir "tamias-$version-windows-$arch-setup.exe"
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 if (Test-Path -LiteralPath $outputPath) {
     Remove-Item -LiteralPath $outputPath -Force
@@ -48,7 +48,7 @@ if (Test-Path -LiteralPath $outputPath) {
 
 Push-Location $repoRoot
 try {
-    & $iscc (Join-Path $repoRoot 'build\windows\tamiops.iss')
+    & $iscc (Join-Path $repoRoot 'build\windows\tamias.iss')
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
     }

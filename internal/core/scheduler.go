@@ -15,12 +15,13 @@ import (
 )
 
 type scheduleObservation struct {
-	localFingerprint string
-	changedAt        time.Time
-	lastFullScan     time.Time
-	lastTry          time.Time
-	localDirty       bool
-	remoteToken      string
+	localFingerprint        string
+	changedAt               time.Time
+	lastFullScan            time.Time
+	lastTry                 time.Time
+	localDirty              bool
+	remoteToken             string
+	pendingOperationBlocked bool
 }
 
 var schedulerObservations sync.Map // map[schedulerKey]scheduleObservation
@@ -55,6 +56,7 @@ func (s *Service) StartScheduler() {
 	done := make(chan struct{})
 	s.schedulerCancel, s.schedulerDone = cancel, done
 	s.mu.Unlock()
+	s.startAutomaticConnectionDetection()
 	go s.schedulerLoop(ctx, done)
 }
 
@@ -197,10 +199,11 @@ func localMetadataFingerprint(ctx context.Context, localPath string, excludes []
 			}
 			return nil
 		}
-		if excludedPath(excludes, filepath.ToSlash(key)) {
-			if entry.IsDir() {
+		if entry.IsDir() {
+			if excludedPath(excludes, filepath.ToSlash(key)) {
 				return filepath.SkipDir
 			}
+		} else if syncPathExcluded(excludes, filepath.ToSlash(key)) {
 			return nil
 		}
 		// Symlinks are deliberately outside the synchronization tree. In
@@ -238,6 +241,12 @@ func (s *Service) schedulerCycle(ctx context.Context, force bool) {
 		if ctx.Err() != nil {
 			return
 		}
+		s.mu.Lock()
+		detecting := s.connectionDetectionPending[j.ConnectionID]
+		s.mu.Unlock()
+		if detecting {
+			continue
+		}
 		if !j.Enabled || j.LocalPath == "" || j.Status == "running" || j.Status == "retrying" || j.Status == "scanning" {
 			continue
 		}
@@ -245,13 +254,26 @@ func (s *Service) schedulerCycle(ctx context.Context, force bool) {
 		watching := j.Watch
 		dirtyToken := s.remoteChangeToken(j.ID)
 		manual := !watching && j.ScheduleMinutes <= 0
-		if manual && dirtyToken == "" && !pending {
-			continue
-		}
 		key := schedulerKey{s, j.ID}
 		state := scheduleObservation{}
 		if previous, ok := schedulerObservations.Load(key); ok {
 			state, _ = previous.(scheduleObservation)
+		}
+		blockedResolved := false
+		if state.pendingOperationBlocked {
+			stillBlocked, err := s.hasJobPendingOperations(j)
+			// Fail closed if the blocker query itself fails. The next cycle can
+			// retry the local database check without repeating a remote sync.
+			if err != nil || stillBlocked {
+				continue
+			}
+			state.pendingOperationBlocked = false
+			state.lastTry = time.Time{}
+			blockedResolved = true
+			schedulerObservations.Store(key, state)
+		}
+		if manual && dirtyToken == "" && !pending && !blockedResolved {
+			continue
 		}
 		if !force && (dirtyToken == "" || dirtyToken == state.remoteToken) && !state.lastTry.IsZero() && now.Sub(state.lastTry) < schedulerRetryBackoff {
 			continue
@@ -292,7 +314,7 @@ func (s *Service) schedulerCycle(ctx context.Context, force bool) {
 		}
 		remotePollDue := state.lastFullScan.IsZero() || now.Sub(state.lastFullScan) >= interval
 		localDebounced := state.localDirty && !state.changedAt.IsZero() && now.Sub(state.changedAt) >= schedulerDebounce
-		shouldScan := force || dirtyToken != "" || pending || scheduledDue || watching && (localDebounced || remotePollDue)
+		shouldScan := force || blockedResolved || dirtyToken != "" || pending || scheduledDue || watching && (localDebounced || remotePollDue)
 		if !shouldScan {
 			schedulerObservations.Store(key, state)
 			continue
@@ -315,6 +337,13 @@ func (s *Service) schedulerCycle(ctx context.Context, force bool) {
 		}
 		if err != nil {
 			state.lastFullScan, state.lastTry = now, now
+			if errors.Is(err, ErrPendingOperation) {
+				state.pendingOperationBlocked = true
+				state.lastTry = time.Time{}
+				schedulerObservations.Store(key, state)
+				s.recordSchedulerResult(j.ID, now, "needs_attention", err.Error(), false)
+				continue
+			}
 			schedulerObservations.Store(key, state)
 			s.recordSchedulerResult(j.ID, now, "error", "自动核对失败："+err.Error(), scheduledDue)
 			continue
@@ -373,6 +402,13 @@ func (s *Service) schedulerCycle(ctx context.Context, force bool) {
 		}
 		_, err = s.RunPlan(ctx, j.ID, plan.Token)
 		if err != nil && !errors.Is(err, context.Canceled) {
+			if errors.Is(err, ErrPendingOperation) {
+				state.pendingOperationBlocked = true
+				state.lastTry = time.Time{}
+				schedulerObservations.Store(key, state)
+				s.recordSchedulerResult(j.ID, now, "needs_attention", err.Error(), false)
+				continue
+			}
 			state.lastTry = now
 			schedulerObservations.Store(key, state)
 			s.recordSchedulerResult(j.ID, now, "error", "自动执行失败："+err.Error(), scheduledDue)

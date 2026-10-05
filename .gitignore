@@ -5,3 +5,7 @@ bin/
 *.log
 .local/
 dist/
+
+# Local UI verification screenshots may contain machine-specific paths.
+docs/assets/design-review/*.png
+docs/assets/design-review/*.jpg

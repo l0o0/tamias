@@ -1,4 +1,4 @@
-// Command tamiops hosts the same storage core without Wails, a webview or a desktop session.
+// Command tamias hosts the same storage core without Wails, a webview or a desktop session.
 package main
 
 import (
@@ -22,7 +22,7 @@ func main() {
 	}
 }
 func run() error {
-	flags := flag.NewFlagSet("tamiops", flag.ContinueOnError)
+	flags := flag.NewFlagSet("tamias", flag.ContinueOnError)
 	base, _ := os.UserConfigDir()
 	data := flags.String("data-dir", filepath.Join(base, "Tami"), "State directory (exclusive per process)")
 	gateways := flags.String("gateways", "", "Comma-separated gateway IDs for serve")
@@ -118,7 +118,7 @@ func run() error {
 				}
 			}
 		}
-		fmt.Fprintln(os.Stderr, "tamiops core running; press Ctrl+C to stop")
+		fmt.Fprintln(os.Stderr, "Tamias core running; press Ctrl+C to stop")
 		<-ctx.Done()
 		return nil
 	default:
@@ -133,7 +133,10 @@ func run() error {
 }
 
 func vaultKeyFromEnv() ([]byte, error) {
-	name, value := "TAMIOPS_VAULT_KEY", os.Getenv("TAMIOPS_VAULT_KEY")
+	name, value := "TAMIAS_VAULT_KEY", os.Getenv("TAMIAS_VAULT_KEY")
+	if value == "" {
+		name, value = "TAMIOPS_VAULT_KEY", os.Getenv("TAMIOPS_VAULT_KEY")
+	}
 	if value == "" {
 		name, value = "TAMI_VAULT_KEY", os.Getenv("TAMI_VAULT_KEY")
 	}

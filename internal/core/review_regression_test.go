@@ -127,6 +127,7 @@ func TestSlowUploadReceptionDoesNotHoldCommitLock(t *testing.T) {
 }
 func TestPinnedCacheExplicitRefreshRetainsPreviousContent(t *testing.T) {
 	s, id := testService(t)
+	setNormalRecoveryForTest(t, s, id, true)
 	b := Backend{s, id}
 	ctx := context.Background()
 	first, err := b.Put(ctx, "version", strings.NewReader("before"), 6, storage.Condition{})

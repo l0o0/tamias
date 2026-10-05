@@ -23,9 +23,10 @@ type editDAVObject struct {
 }
 
 type editDAV struct {
-	mu      sync.Mutex
-	objects map[string]editDAVObject
-	next    int
+	mu                    sync.Mutex
+	objects               map[string]editDAVObject
+	next                  int
+	ignoreCreateCondition bool
 }
 
 func newEditDAV(t *testing.T) (string, *editDAV) {
@@ -61,7 +62,7 @@ func (d *editDAV) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>%s</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:getcontentlength>0</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`, r.URL.EscapedPath())
 	case http.MethodPut:
 		old, exists := d.objects[key]
-		if r.Header.Get("If-None-Match") == "*" && exists || r.Header.Get("If-Match") != "" && (!exists || r.Header.Get("If-Match") != old.etag) {
+		if (r.Header.Get("If-None-Match") == "*" && exists && !d.ignoreCreateCondition) || r.Header.Get("If-Match") != "" && (!exists || r.Header.Get("If-Match") != old.etag) {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
@@ -144,9 +145,17 @@ func editInput(c Connection) ConnectionInput {
 
 func TestConnectionEditKeepsIDAndBlankPasswordUsesStoredCredential(t *testing.T) {
 	s, vault, old, _ := setupEditableConnection(t)
+	s.mu.Lock()
+	s.cfg.Connections[0].WriteRestriction = "旧连接的安全写入限制"
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
 	in := editInput(old)
 	in.Name = "renamed"
 	in.Username = ""
+	in.WriteMode = storage.WriteModeStrict
 	preview, err := s.previewConnectionEdit(context.Background(), in)
 	if err != nil || preview.Token == "" || !preview.Capabilities.ConditionalWrite || !preview.Capabilities.ConditionalDelete {
 		t.Fatalf("preview=%+v err=%v", preview, err)
@@ -162,12 +171,216 @@ func TestConnectionEditKeepsIDAndBlankPasswordUsesStoredCredential(t *testing.T)
 	if updated.ID != old.ID || updated.Name != "renamed" || updated.Config.Endpoint != old.Endpoint || updated.Username != "alice" {
 		t.Fatalf("connection identity/config changed unexpectedly: %+v", updated)
 	}
+	if updated.WriteRestriction != "" {
+		t.Fatalf("configuration edit retained the old write restriction: %q", updated.WriteRestriction)
+	}
 	creds, _, err := loadConnectionCredentials(s, old.ID)
 	if err != nil || creds.Password != "old-password" || creds.Username != "alice" {
 		t.Fatalf("blank password did not retain credentials: %+v err=%v", creds, err)
 	}
 	if _, ok := vault.m["connection:"+old.ID]; !ok {
 		t.Fatal("connection credential was removed")
+	}
+}
+
+func TestConnectionEditAllowsUnsupportedConditionalWritesAndPersistsMode(t *testing.T) {
+	s, _, old, dav := setupEditableConnection(t)
+	dav.mu.Lock()
+	dav.ignoreCreateCondition = true
+	dav.mu.Unlock()
+	in := editInput(old)
+	in.Name = "readable without conditions"
+	in.WriteMode = storage.WriteModeStrict
+	preview, err := s.previewConnectionEdit(context.Background(), in)
+	if err != nil || preview.Token == "" {
+		t.Fatalf("unsupported conditional operations blocked an editable connection: preview=%+v err=%v", preview, err)
+	}
+	if preview.Capabilities.ConditionalWrite || preview.Capabilities.ConditionalDelete || preview.WriteRestriction == "" || preview.CompatibilityProfile != connectionProfileCompatible {
+		t.Fatalf("conditional capability failure was not reported truthfully: %+v", preview)
+	}
+	dav.mu.Lock()
+	probeWrites := dav.next
+	dav.mu.Unlock()
+	if probeWrites == 0 {
+		t.Fatal("preview did not automatically verify conditional writes")
+	}
+	updated, err := s.applyConnectionEdit(context.Background(), in, preview.Token)
+	if err != nil {
+		t.Fatalf("apply failed after an explicitly unsupported conditional probe: %v", err)
+	}
+	if updated.WriteMode != storage.WriteModeStrict || updated.Capabilities.ConditionalWrite || updated.Capabilities.ConditionalDelete || updated.WriteRestriction == "" {
+		t.Fatalf("saved connection lost selected mode or restriction: %+v", updated)
+	}
+	if updated.CompatibilityProfile != connectionProfileCompatible || !connectionDetectionCurrent(updated) {
+		t.Fatalf("saved connection lost its measured compatibility profile: %+v", updated)
+	}
+	dav.mu.Lock()
+	if dav.next != probeWrites {
+		dav.mu.Unlock()
+		t.Fatalf("apply repeated the full conditional probe: PUT count %d -> %d", probeWrites, dav.next)
+	}
+	dav.mu.Unlock()
+	var raw string
+	if err = s.db.QueryRow(`SELECT data FROM settings WHERE id=1`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var saved config
+	if err = json.Unmarshal([]byte(raw), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Connections) != 1 || saved.Connections[0].WriteMode != storage.WriteModeStrict {
+		t.Fatalf("write mode was not persisted in the main config: %+v", saved.Connections)
+	}
+}
+
+func TestConnectionEditModeIsFingerprintBoundAndUnknownModeRejected(t *testing.T) {
+	s, _, old, _ := setupEditableConnection(t)
+	in := editInput(old)
+	in.WriteMode = storage.WriteModeCompatible
+	preview, err := s.previewConnectionEdit(context.Background(), in)
+	if err != nil || preview.Token == "" {
+		t.Fatalf("valid mode preview failed: preview=%+v err=%v", preview, err)
+	}
+	stale := in
+	stale.WriteMode = storage.WriteModeCopy
+	if _, err = s.applyConnectionEdit(context.Background(), stale, preview.Token); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("preview token accepted a different write mode: %v", err)
+	}
+	updated, err := s.applyConnectionEdit(context.Background(), in, preview.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WriteMode != storage.WriteModeCompatible {
+		t.Fatalf("selected mode did not persist: got %q", updated.WriteMode)
+	}
+	invalid := editInput(old)
+	invalid.WriteMode = "permissive"
+	if _, err = s.previewConnectionEdit(context.Background(), invalid); err == nil {
+		t.Fatal("connection edit accepted an unknown write mode")
+	}
+	if _, err = s.AddConnection(context.Background(), ConnectionInput{Config: storage.Config{Name: "invalid", Kind: "webdav", Endpoint: "https://example.test/dav", WriteMode: "permissive"}}); err == nil {
+		t.Fatal("connection creation accepted an unknown write mode")
+	}
+}
+
+func TestWriteModeEditPausesJobsAndInvalidatesPlansButKeepsBaselines(t *testing.T) {
+	s, _, old, _ := setupEditableConnection(t)
+	jobID := ID()
+	s.mu.Lock()
+	s.cfg.Jobs = append(s.cfg.Jobs, Job{ID: jobID, Name: "sync", ConnectionID: old.ID, Enabled: true, Status: "idle"})
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	if err := s.ensureSyncSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureConnectionEditSchema(s); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`INSERT INTO baseline(job,path,local_hash,remote_etag) VALUES(?,?,?,?)`, jobID, "keep.txt", "local-hash", `"remote-etag"`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sync_queue(job,path,kind,state,updated) VALUES(?,?,?,'pending',?)`, jobID, "keep.txt", "upload", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sync_plans(job,token,data,created) VALUES(?,?,?,?)`, jobID, "old-token", "{}", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sync_dirty(job,token,updated) VALUES(?,?,?)`, jobID, "dirty-token", now); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.plans["old-token"] = Plan{Token: "old-token", JobID: jobID}
+	s.mu.Unlock()
+	in := editInput(old)
+	in.WriteMode = storage.WriteModeCompatible
+	preview, err := s.previewConnectionEdit(context.Background(), in)
+	if err != nil || preview.Token == "" || !preview.WriteModeChanged || preview.Impact.ScopeChanged {
+		t.Fatalf("mode-change preview incorrect: preview=%+v err=%v", preview, err)
+	}
+	updated, err := s.applyConnectionEdit(context.Background(), in, preview.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WriteMode != storage.WriteModeCompatible {
+		t.Fatalf("mode was not saved: %+v", updated)
+	}
+	for _, table := range []string{"sync_queue", "sync_plans", "sync_dirty"} {
+		var count int
+		if err = s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE job=?`, jobID).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s retained the old plan state count=%d err=%v", table, count, err)
+		}
+	}
+	var baselines int
+	if err = s.db.QueryRow(`SELECT count(*) FROM baseline WHERE job=?`, jobID).Scan(&baselines); err != nil || baselines != 1 {
+		t.Fatalf("mode change did not preserve the sync baseline: count=%d err=%v", baselines, err)
+	}
+	s.mu.Lock()
+	var after Job
+	for _, job := range s.cfg.Jobs {
+		if job.ID == jobID {
+			after = job
+		}
+	}
+	_, hasOldPlan := s.plans["old-token"]
+	s.mu.Unlock()
+	if after.Enabled || after.Status != "paused" || !strings.Contains(after.Detail, "重新预览") || hasOldPlan {
+		t.Fatalf("mode change did not pause and invalidate sync preview state: job=%+v oldPlanRetained=%v", after, hasOldPlan)
+	}
+}
+
+func TestWriteTestInCopyModeOnlyChecksReadAccess(t *testing.T) {
+	s, _, old, dav := setupEditableConnection(t)
+	restriction := "existing conditional-write restriction"
+	s.mu.Lock()
+	s.cfg.Connections[0].WriteMode = storage.WriteModeCopy
+	s.cfg.Connections[0].WriteRestriction = restriction
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	if _, err := s.TestConnection(context.Background(), old.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	dav.mu.Lock()
+	objects := len(dav.objects)
+	dav.mu.Unlock()
+	if objects != 0 {
+		t.Fatalf("copy-mode connection test mutated remote objects: %d", objects)
+	}
+	updated, err := s.connection(old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Tested || updated.Capabilities.ConditionalWrite || updated.Capabilities.ConditionalDelete || updated.WriteRestriction != restriction {
+		t.Fatalf("copy-mode read validation changed write status: %+v", updated)
+	}
+}
+
+func TestUpdateCredentialsClearsKnownWriteRestriction(t *testing.T) {
+	s, _, old, _ := setupEditableConnection(t)
+	s.mu.Lock()
+	s.cfg.Connections[0].WriteRestriction = "旧凭据对应的安全写入限制"
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+
+	input := ConnectionInput{Config: old.Config, Password: "new-password"}
+	if err := s.UpdateCredentials(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.connection(old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WriteRestriction != "" || updated.CompatibilityProfile != connectionProfileConditional || !updated.Capabilities.ConditionalWrite || !updated.Capabilities.ConditionalDelete || !connectionDetectionCurrent(updated) {
+		t.Fatalf("credential update did not persist fresh capability detection: %+v", updated)
 	}
 }
 
@@ -425,5 +638,149 @@ func TestWebDAVNameEditIgnoresUnusedS3Settings(t *testing.T) {
 	candidate.Username = "other"
 	if !connectionStorageScopeChanged(old, candidate) {
 		t.Fatal("WebDAV account change did not change storage scope")
+	}
+}
+
+func TestStandardEditDetectsCapabilitiesAndRecoveryPolicyChangeInvalidatesPlans(t *testing.T) {
+	s, _, old, dav := setupEditableConnection(t)
+	dav.mu.Lock()
+	dav.ignoreCreateCondition = true
+	dav.mu.Unlock()
+	s.mu.Lock()
+	s.cfg.Connections[0].WriteRestriction = "条件写入能力未验证"
+	jobID := ID()
+	s.cfg.Jobs = append(s.cfg.Jobs, Job{ID: jobID, Name: "sync", ConnectionID: old.ID, Enabled: true, Status: "idle"})
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	if err := s.ensureSyncSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureConnectionEditSchema(s); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`INSERT INTO baseline(job,path,local_hash,remote_etag) VALUES(?,?,?,?)`, jobID, "keep.txt", "local-hash", `"remote-etag"`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sync_queue(job,path,kind,state,updated) VALUES(?,?,?,'pending',?)`, jobID, "keep.txt", "upload", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sync_plans(job,token,data,created) VALUES(?,?,?,?)`, jobID, "old-token", "{}", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sync_dirty(job,token,updated) VALUES(?,?,?)`, jobID, "dirty-token", now); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.plans["old-token"] = Plan{Token: "old-token", JobID: jobID}
+	s.mu.Unlock()
+	in := editInput(old)
+	in.WriteMode = storage.WriteModeStandard
+	in.KeepRecovery = true
+	preview, err := s.previewConnectionEdit(context.Background(), in)
+	if err != nil || preview.Token == "" || !preview.PolicyChanged || !preview.RecoveryChanged || preview.WriteModeChanged {
+		t.Fatalf("recovery-policy preview incorrect: preview=%+v err=%v", preview, err)
+	}
+	if preview.CompatibilityProfile != connectionProfileCompatible || !strings.Contains(preview.WriteRestriction, storage.ErrConditionalUnsupported.Error()) {
+		t.Fatalf("normal edit did not record the detected conditional-write restriction: %+v", preview)
+	}
+	dav.mu.Lock()
+	probeWrites := dav.next
+	dav.mu.Unlock()
+	if probeWrites == 0 {
+		t.Fatal("normal edit did not automatically probe conditional-write support")
+	}
+	stale := in
+	stale.KeepRecovery = false
+	if _, err = s.applyConnectionEdit(context.Background(), stale, preview.Token); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("preview token accepted a changed recovery setting: %v", err)
+	}
+	updated, err := s.applyConnectionEdit(context.Background(), in, preview.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WriteMode != storage.WriteModeStandard || !updated.KeepRecovery {
+		t.Fatalf("normal mode or recovery setting was not persisted: %+v", updated.Config)
+	}
+	dav.mu.Lock()
+	applyWrites := dav.next
+	dav.mu.Unlock()
+	if applyWrites != probeWrites {
+		t.Fatalf("applying normal edit repeated the full probe: PUT count %d -> %d", probeWrites, applyWrites)
+	}
+	var raw string
+	if err = s.db.QueryRow(`SELECT data FROM settings WHERE id=1`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var saved config
+	if err = json.Unmarshal([]byte(raw), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Connections) != 1 || !saved.Connections[0].KeepRecovery || saved.Connections[0].WriteMode != storage.WriteModeStandard {
+		t.Fatalf("normal mode/recovery setting did not persist in config: %+v", saved.Connections)
+	}
+	for _, table := range []string{"sync_queue", "sync_plans", "sync_dirty"} {
+		var count int
+		if err = s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE job=?`, jobID).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s retained stale plan state count=%d err=%v", table, count, err)
+		}
+	}
+	var baselines int
+	if err = s.db.QueryRow(`SELECT count(*) FROM baseline WHERE job=?`, jobID).Scan(&baselines); err != nil || baselines != 1 {
+		t.Fatalf("recovery-setting change did not preserve baseline: count=%d err=%v", baselines, err)
+	}
+	s.mu.Lock()
+	var after Job
+	for _, job := range s.cfg.Jobs {
+		if job.ID == jobID {
+			after = job
+		}
+	}
+	_, hasOldPlan := s.plans["old-token"]
+	s.mu.Unlock()
+	if after.Enabled || after.Status != "paused" || !strings.Contains(after.Detail, "重新预览") || hasOldPlan {
+		t.Fatalf("recovery-setting change did not pause and invalidate sync preview state: job=%+v oldPlanRetained=%v", after, hasOldPlan)
+	}
+}
+
+func TestStandardEditRedetectsCapabilitiesWhenCredentialsChange(t *testing.T) {
+	s, _, old, dav := setupEditableConnection(t)
+	s.mu.Lock()
+	s.cfg.Connections[0].WriteMode = storage.WriteModeStandard
+	s.cfg.Connections[0].Capabilities = storage.Capabilities{ConditionalWrite: true, ConditionalDelete: true, RangeRead: true, MultipartConditional: true}
+	s.cfg.Connections[0].WriteRestriction = "旧凭据能力限制"
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	in := editInput(old)
+	in.WriteMode = storage.WriteModeStandard
+	in.Password = "new-password"
+	preview, err := s.previewConnectionEdit(context.Background(), in)
+	if err != nil || preview.Token == "" {
+		t.Fatalf("normal edit with readable new credentials failed: preview=%+v err=%v", preview, err)
+	}
+	if !preview.Capabilities.ConditionalWrite || !preview.Capabilities.ConditionalDelete || preview.CompatibilityProfile != connectionProfileConditional || preview.WriteRestriction != "" {
+		t.Fatalf("normal edit did not detect capabilities using the candidate credentials: %+v", preview)
+	}
+	dav.mu.Lock()
+	probeWrites := dav.next
+	dav.mu.Unlock()
+	updated, err := s.applyConnectionEdit(context.Background(), in, preview.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Capabilities.ConditionalWrite || !updated.Capabilities.ConditionalDelete || updated.CompatibilityProfile != connectionProfileConditional || updated.WriteRestriction != "" || !connectionDetectionCurrent(updated) {
+		t.Fatalf("saved connection did not retain the newly detected capabilities: %+v", updated)
+	}
+	dav.mu.Lock()
+	applyWrites := dav.next
+	dav.mu.Unlock()
+	if applyWrites != probeWrites {
+		t.Fatalf("apply repeated the full conditional probe: PUT count %d -> %d", probeWrites, applyWrites)
 	}
 }

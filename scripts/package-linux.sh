@@ -40,9 +40,9 @@ for tool in curl sha256sum ldd readelf file pkg-config dpkg-query dpkg-architect
     command -v "$tool" >/dev/null 2>&1 || die "required tool is missing: $tool"
 done
 
-APP_BINARY="$ROOT_DIR/bin/tamiops/tamiops"
+APP_BINARY="$ROOT_DIR/bin/tamias/tamias"
 ICON="$ROOT_DIR/build/assets/app-icon.png"
-DESKTOP="$ROOT_DIR/build/assets/tamiops.desktop"
+DESKTOP="$ROOT_DIR/build/assets/tamias.desktop"
 APP_LICENSE="$ROOT_DIR/LICENSE"
 APP_NOTICES="$ROOT_DIR/THIRD_PARTY_NOTICES.txt"
 GTK_PLUGIN="$ROOT_DIR/build/linux/linuxdeploy-plugin-gtk.sh"
@@ -60,8 +60,8 @@ WEBKIT_PATH_SHIM_SOURCE="$ROOT_DIR/build/linux/webkit-path-shim.c"
 readelf -h "$APP_BINARY" | grep -Eq 'Class:[[:space:]]+ELF64' || die "binary is not ELF64: $APP_BINARY"
 readelf -h "$APP_BINARY" | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' || die "binary is not x86_64: $APP_BINARY"
 desktop-file-validate "$DESKTOP"
-grep -Eq '^Exec=tamiops([[:space:]]|$)' "$DESKTOP" || die "desktop entry must launch Exec=tamiops"
-grep -Fxq 'Icon=tamiops' "$DESKTOP" || die "desktop entry must use Icon=tamiops"
+grep -Eq '^Exec=tamias([[:space:]]|$)' "$DESKTOP" || die "desktop entry must launch Exec=tamias"
+grep -Fxq 'Icon=tamias' "$DESKTOP" || die "desktop entry must use Icon=tamias"
 
 pkg-config --exists gtk4 webkitgtk-6.0 || die "GTK4 and WebKitGTK 6.0 development metadata is required (install libgtk-4-dev and libwebkitgtk-6.0-dev)"
 printf 'GTK %s; WebKitGTK %s\n' "$(pkg-config --modversion gtk4)" "$(pkg-config --modversion webkitgtk-6.0)"
@@ -75,7 +75,7 @@ grep -q 'libgtk-4\.so' <<<"$binary_ldd" || die "binary is not linked against GTK
 grep -q 'libwebkitgtk-6\.0\.so' <<<"$binary_ldd" || die "binary is not linked against WebKitGTK 6"
 
 OUTPUT_DIR="$ROOT_DIR/dist"
-OUTPUT_NAME="tamiops-${VERSION}-linux-${ARCH}.AppImage"
+OUTPUT_NAME="tamias-${VERSION}-linux-${ARCH}.AppImage"
 OUTPUT="$OUTPUT_DIR/$OUTPUT_NAME"
 TMP_ROOT="${TMPDIR:-/tmp}"
 mkdir -p -- "$TMP_ROOT"
@@ -85,14 +85,14 @@ if [[ -e "$OUTPUT" && ( -d "$OUTPUT" || -L "$OUTPUT" ) ]]; then
     die "refusing to replace a directory or symlink at output path: $OUTPUT"
 fi
 
-WORK_DIR="$(mktemp -d "$TMP_ROOT/tamiops-appimage.XXXXXXXX")"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/tamias-appimage.XXXXXXXX")"
 STAGED_OUTPUT=""
 cleanup() {
     local status=$?
     if [[ -n "$STAGED_OUTPUT" && -f "$STAGED_OUTPUT" ]]; then
         rm -f -- "$STAGED_OUTPUT"
     fi
-    if [[ -n "$WORK_DIR" && -d "$WORK_DIR" && "$WORK_DIR" == "$TMP_ROOT"/tamiops-appimage.* ]]; then
+    if [[ -n "$WORK_DIR" && -d "$WORK_DIR" && "$WORK_DIR" == "$TMP_ROOT"/tamias-appimage.* ]]; then
         rm -rf -- "$WORK_DIR"
     fi
     exit "$status"
@@ -100,8 +100,8 @@ cleanup() {
 trap cleanup EXIT
 
 TOOLS_DIR="$WORK_DIR/tools"
-APP_DIR="$WORK_DIR/tamiops-x86_64.AppDir"
-mkdir -p -- "$TOOLS_DIR" "$APP_DIR/usr/bin" "$APP_DIR/usr/share/doc/tamiops"
+APP_DIR="$WORK_DIR/tamias-x86_64.AppDir"
+mkdir -p -- "$TOOLS_DIR" "$APP_DIR/usr/bin" "$APP_DIR/usr/share/doc/tamias"
 
 fetch_pinned() {
     local url="$1" expected="$2" destination="$3" actual
@@ -128,22 +128,22 @@ fetch_pinned \
     '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d' "$TYPE2_RUNTIME"
 
 printf '%s\n' 'Preparing AppDir'
-install -m 0755 "$APP_BINARY" "$APP_DIR/usr/bin/tamiops"
-install -m 0644 "$ICON" "$APP_DIR/tamiops.png"
-ln -s tamiops.png "$APP_DIR/.DirIcon"
-install -m 0644 "$DESKTOP" "$APP_DIR/tamiops.desktop"
+install -m 0755 "$APP_BINARY" "$APP_DIR/usr/bin/tamias"
+install -m 0644 "$ICON" "$APP_DIR/tamias.png"
+ln -s tamias.png "$APP_DIR/.DirIcon"
+install -m 0644 "$DESKTOP" "$APP_DIR/tamias.desktop"
 install -m 0755 "$APP_RUN" "$APP_DIR/AppRun"
-install -m 0644 "$APP_LICENSE" "$APP_DIR/usr/share/doc/tamiops/LICENSE"
-install -m 0644 "$APP_NOTICES" "$APP_DIR/usr/share/doc/tamiops/THIRD_PARTY_NOTICES.txt"
-cat >> "$APP_DIR/usr/share/doc/tamiops/THIRD_PARTY_NOTICES.txt" <<'EOF'
+install -m 0644 "$APP_LICENSE" "$APP_DIR/usr/share/doc/tamias/LICENSE"
+install -m 0644 "$APP_NOTICES" "$APP_DIR/usr/share/doc/tamias/THIRD_PARTY_NOTICES.txt"
+cat >> "$APP_DIR/usr/share/doc/tamias/THIRD_PARTY_NOTICES.txt" <<'EOF'
 
 Additional license and copyright notices for AppImage packaging tools and the
 bundled Ubuntu GTK/WebKitGTK runtime are installed beside this file. See
 APPIMAGE_PACKAGING.txt and system-dependencies/ for their licenses, versions,
 and source package information.
 EOF
-install -m 0644 "$ROOT_DIR/build/linux/packaging-provenance.txt" "$APP_DIR/usr/share/doc/tamiops/APPIMAGE_PACKAGING.txt"
-install -m 0644 "$ROOT_DIR"/build/linux/licenses/* "$APP_DIR/usr/share/doc/tamiops/"
+install -m 0644 "$ROOT_DIR/build/linux/packaging-provenance.txt" "$APP_DIR/usr/share/doc/tamias/APPIMAGE_PACKAGING.txt"
+install -m 0644 "$ROOT_DIR"/build/linux/licenses/* "$APP_DIR/usr/share/doc/tamias/"
 
 [[ "$(sha256sum "$GTK_PLUGIN" | awk '{print $1}')" == \
    'b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171' ]] || \
@@ -226,7 +226,7 @@ for library in "${WEBKIT_LIBRARIES[@]}"; do
 done
 
 printf 'Deploying GTK4, WebKitGTK6, and their process helpers into AppDir\n'
-declare -a LINUXDEPLOY_ARGS=(--appimage-extract-and-run --appdir "$APP_DIR" --executable "$APP_DIR/usr/bin/tamiops")
+declare -a LINUXDEPLOY_ARGS=(--appimage-extract-and-run --appdir "$APP_DIR" --executable "$APP_DIR/usr/bin/tamias")
 for helper in "${WEBKIT_EXECUTABLES[@]}"; do
     LINUXDEPLOY_ARGS+=(--executable "$helper")
 done
@@ -246,8 +246,8 @@ mkdir -p -- "${WEBKIT_PATH_SHIM%/*}"
 cc -shared -fPIC -O2 -Wall -Wextra -Werror -Wl,-z,relro,-z,now \
     -o "$WEBKIT_PATH_SHIM" "$WEBKIT_PATH_SHIM_SOURCE" -ldl
 [[ -s "$WEBKIT_PATH_SHIM" ]] || die "WebKit path shim compilation produced no output"
-for elf in "$APP_DIR/usr/bin/tamiops" "${WEBKIT_EXECUTABLES[@]}" "${WEBKIT_LIBRARIES[@]}"; do
-    if [[ "$elf" != "$APP_DIR/usr/bin/tamiops" ]]; then
+for elf in "$APP_DIR/usr/bin/tamias" "${WEBKIT_EXECUTABLES[@]}" "${WEBKIT_LIBRARIES[@]}"; do
+    if [[ "$elf" != "$APP_DIR/usr/bin/tamias" ]]; then
         # linuxdeploy can also create a flattened usr/bin copy for the
         # --executable argument. WebKit starts its original libexec copy, so
         # give that original helper (and the injected bundle) an AppDir-local
@@ -260,7 +260,7 @@ for elf in "$APP_DIR/usr/bin/tamiops" "${WEBKIT_EXECUTABLES[@]}" "${WEBKIT_LIBRA
 done
 
 collect_package_notices() {
-    local doc_dir="$APP_DIR/usr/share/doc/tamiops/system-dependencies"
+    local doc_dir="$APP_DIR/usr/share/doc/tamias/system-dependencies"
     local manifest="$doc_dir/packages.tsv"
     local package deployed rel source_path owner_output owner_line pkg metadata version source_pkg source_version pkg_doc out_dir candidate canonical multiarch rest
     declare -A packages=()

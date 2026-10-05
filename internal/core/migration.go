@@ -337,7 +337,7 @@ func (s *Service) CreateMigrationJob(j MigrationJob) (MigrationJob, error) {
 			return j, err
 		}
 	}
-	if !targetConn.Capabilities.ConditionalWrite {
+	if !canWriteStrict(targetConn) {
 		return j, errors.New("目标连接尚未验证条件写入能力")
 	}
 	sourceConn, err := s.connection(j.SourceConnection)
@@ -456,7 +456,7 @@ func (s *Service) UpdateMigrationJob(j MigrationJob) (MigrationJob, error) {
 	if err != nil {
 		return j, err
 	}
-	if !conn.Capabilities.ConditionalWrite {
+	if !canWriteStrict(conn) {
 		return j, errors.New("目标连接尚未验证条件写入能力")
 	}
 	if err = validKey(j.SourcePrefix); err != nil {
@@ -587,6 +587,9 @@ func (s *Service) buildMigrationPreview(ctx context.Context, j MigrationJob) (Mi
 	if err != nil {
 		return MigrationPreview{}, err
 	}
+	if !canWriteStrict(targetConn) {
+		return MigrationPreview{}, errors.New("目标连接尚未验证条件写入能力")
+	}
 	if err = validateMigrationLocations(sourceConn, targetConn, j); err != nil {
 		return MigrationPreview{}, err
 	}
@@ -705,7 +708,7 @@ func (s *Service) StartMigration(ctx context.Context, id, token string) (Migrati
 	if err != nil {
 		return MigrationRun{}, err
 	}
-	if !targetConnection.Capabilities.ConditionalWrite {
+	if !canWriteStrict(targetConnection) {
 		return MigrationRun{}, errors.New("目标连接尚未重新验证条件写入能力")
 	}
 	var runCount int
@@ -827,6 +830,11 @@ func (s *Service) runMigration(ctx context.Context, runID string) {
 		return
 	}
 	ctx = withTransferScope(ctx, "migration", job.ID)
+	targetConnection, targetErr := s.connection(job.TargetConnection)
+	if targetErr != nil || !canWriteStrict(targetConnection) {
+		s.pauseMigrationLaunch(runID, errors.New("目标连接尚未重新验证条件写入能力"))
+		return
+	}
 	if err = s.validateMigrationJobLocations(job); err != nil {
 		s.finishMigrationRun(runID, "partial", "迁移路径指向受保护备份目录，任务已停止")
 		return
@@ -959,7 +967,7 @@ func (s *Service) transferMigrationItem(ctx context.Context, source, target Back
 		}
 		return item, storage.ErrConflict
 	}
-	if err = ensureRemoteDirectory(ctx, target, path.Dir(item.TargetPath)); err != nil {
+	if err = ensureRemoteDirectoryStrict(ctx, target, path.Dir(item.TargetPath)); err != nil {
 		return item, err
 	}
 	condition := storage.Condition{IfNoneMatch: true}
@@ -972,7 +980,7 @@ func (s *Service) transferMigrationItem(ctx context.Context, source, target Back
 	if _, err = stage.Seek(0, io.SeekStart); err != nil {
 		return item, err
 	}
-	entry, err := target.put(ctx, item.TargetPath, stage, size, condition, hash)
+	entry, err := target.putStrict(ctx, item.TargetPath, stage, size, condition, hash)
 	if err != nil {
 		return item, err
 	}
@@ -1131,6 +1139,13 @@ func (s *Service) ResumeMigration(ctx context.Context, runID string) (MigrationR
 	if job.Deleted || !job.Enabled {
 		return run, errors.New("迁移任务已暂停或删除")
 	}
+	targetConnection, err := s.connection(job.TargetConnection)
+	if err != nil {
+		return run, err
+	}
+	if !canWriteStrict(targetConnection) {
+		return run, errors.New("目标连接尚未重新验证条件写入能力")
+	}
 	if run.State == "complete" {
 		return run, errors.New("已完成的迁移不能恢复")
 	}
@@ -1208,8 +1223,15 @@ func (s *Service) PreviewMigrationCleanup(ctx context.Context, runID string) (Mi
 	if err != nil {
 		return MigrationCleanupPreview{}, err
 	}
-	if !sourceConnection.Capabilities.ConditionalDelete {
+	if !canDelete(sourceConnection) {
 		return MigrationCleanupPreview{}, errors.New("源连接尚未验证条件删除能力，已保留所有源文件")
+	}
+	targetConnection, err := s.connection(job.TargetConnection)
+	if err != nil {
+		return MigrationCleanupPreview{}, err
+	}
+	if !canWriteStrict(targetConnection) {
+		return MigrationCleanupPreview{}, errors.New("迁移目标连接尚未验证条件写入能力，已保留所有源文件")
 	}
 	source := Backend{Service: s, ConnectionID: job.SourceConnection}
 	target := Backend{Service: s, ConnectionID: job.TargetConnection}
@@ -1308,6 +1330,20 @@ func (s *Service) CleanupMigrationSource(ctx context.Context, runID, token strin
 	}
 	if err = s.validateMigrationJobLocations(job); err != nil {
 		return err
+	}
+	sourceConnection, err := s.connection(job.SourceConnection)
+	if err != nil {
+		return err
+	}
+	if !canDelete(sourceConnection) {
+		return errors.New("源连接尚未重新验证条件删除能力，已保留所有源文件")
+	}
+	targetConnection, err := s.connection(job.TargetConnection)
+	if err != nil {
+		return err
+	}
+	if !canWriteStrict(targetConnection) {
+		return errors.New("迁移目标连接尚未重新验证条件写入能力，已保留所有源文件")
 	}
 	if migrationCleanupToken(runID, job, planned.Items) != token {
 		return storage.ErrConflict

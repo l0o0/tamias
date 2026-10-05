@@ -12,8 +12,8 @@ import (
 
 func TestWebDAVRangeRequiresStableRevisionAndValidPartialResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.Header.Get("Range") != "bytes=2-4" || r.Header.Get("If-Match") != `"stable"` {
-			t.Errorf("unexpected range request: method=%s Range=%q If-Match=%q", r.Method, r.Header.Get("Range"), r.Header.Get("If-Match"))
+		if r.Method != http.MethodGet || r.Header.Get("Range") != "bytes=2-4" || r.Header.Get("If-Match") != `"stable"` || r.Header.Get("Accept-Encoding") != "identity" {
+			t.Errorf("unexpected range request: method=%s Range=%q If-Match=%q Accept-Encoding=%q", r.Method, r.Header.Get("Range"), r.Header.Get("If-Match"), r.Header.Get("Accept-Encoding"))
 		}
 		w.Header().Set("ETag", `"stable"`)
 		w.Header().Set("Content-Range", "bytes 2-4/8")

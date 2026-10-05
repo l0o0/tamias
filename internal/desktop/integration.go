@@ -31,7 +31,7 @@ func Open(filename string) error {
 }
 
 // AppImage and the bundled GTK hook change paths and display settings for
-// tamiops itself. Restore the caller's original values before invoking an
+// Tamias itself. Restore the caller's original values before invoking an
 // external desktop application.
 func externalEnvironment() []string {
 	env := os.Environ()
@@ -145,7 +145,7 @@ func renderAutoStartContent(goos, executable, dataDir string) (string, error) {
 		escape := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "`", "\\`", "$", "\\$", "%", "%%")
 		quotedExecutable := escape.Replace(executable)
 		quotedDataDir := escape.Replace(dataDir)
-		content := "[Desktop Entry]\nType=Application\nName=tamiops\nExec=\"" + quotedExecutable + "\" --data-dir=\"" + quotedDataDir + "\"\nTerminal=false\n"
+		content := "[Desktop Entry]\nType=Application\nName=Tamias\nName[zh_CN]=小花鼠\nExec=\"" + quotedExecutable + "\" --data-dir=\"" + quotedDataDir + "\"\nTerminal=false\n"
 		return content, nil
 	case "windows":
 		if strings.ContainsAny(executable+dataDir, "%\"\r\n\x00") {

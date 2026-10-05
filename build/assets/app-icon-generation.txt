@@ -1,7 +1,26 @@
-Tool: built-in image_gen (imagegen skill)
-Mode: edit / background-extraction; transparent_background=true
-Input: user-provided squirrel icon (existing build/assets/app-icon.png)
-Output: build/assets/app-icon.png; frontend/public/app-icon.png
+Application icon source: build/assets/app-icon.svg
+Tray icon source: frontend/src/assets/squirrel-logo.svg
+Renderer: scripts/render-app-icons.swift (macOS AppKit; no third-party dependency)
 
-Final prompt:
-Use case: background-extraction. Edit target: the attached existing Tami squirrel app icon. Remove the entire off-white rounded-square tile, its border/shadow, and all surrounding background. Keep ONLY the existing dark charcoal squirrel mark, preserving its recognizable exact silhouette, proportions, curved tail, body, head, ear and eye shape. All light negative-space areas within the tail/body and the eye must also be true transparent alpha. Do not redesign the squirrel. Output a clean square PNG with actual transparent background, no checkerboard painted into the pixels, no tile, no outline, no shadow, no text. Center the squirrel with balanced transparent padding, suitable for a desktop app icon and small sidebar logo.
+Run from the repository root with:
+  swift scripts/render-app-icons.swift
+
+The renderer writes the transparent 1024 x 1024 application PNG to
+build/assets/app-icon.png and frontend/public/app-icon.png, the monochrome
+alpha tray image to build/assets/tray-icon.png, and a six-size PNG-frame ICO
+to build/windows/tamias.ico (16, 32, 48, 64, 128, and 256 px).
+
+The application SVG keeps the existing squirrel paths and adds warm fur tones,
+dark edge definition, a light eye, and a gold acorn so the mark reads against
+both light and dark Dock backgrounds. It has no background tile; the canvas
+and the carved tail channels remain transparent. The macOS build turns the
+application PNG into ICNS. Wails uses that colored PNG as the application
+icon, while the macOS menu-bar tray keeps the original monochrome template
+image so the system can tint it for light and dark menu bars.
+
+Tray click greeting: build/assets/tray-tail/frame-00.png through frame-19.png.
+These 20 transparent 160 x 160 frames rotate only tm-logo-tail around (78,135),
+matching the UI's 1050 ms greeting. Regenerate just these frames with:
+  swift scripts/render-app-icons.swift --tray-animation-only
+Clicks play one greeting and restore the static tray icon; overlapping clicks
+share the current playback. App context cancellation stops future updates.

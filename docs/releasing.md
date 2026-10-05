@@ -1,4 +1,4 @@
-# 发布指南
+# Tamias 发布指南
 
 安装包由 `.github/workflows/release.yml` 在各平台原生构建。发布矩阵为 Windows x64、macOS arm64 / amd64、Linux x64。
 
@@ -33,7 +33,7 @@ bash scripts/build-desktop.sh
 ./scripts/package-windows.ps1
 ```
 
-产物写入 `dist/`。安装器验证脚本会安装应用，只应在一次性的 CI 环境中执行。打包脚本本身不会安装应用。
+产物写入 `dist/`，命名为 `tamias-<版本>-macos-<架构>.pkg`、`tamias-<版本>-windows-amd64-setup.exe` 或 `tamias-<版本>-linux-amd64.AppImage`。GitHub 仓库仍为 `l0o0/tamiops`；已发布的 `0.2.0-beta.1` 安装包和版本说明保留旧 `tamiops` 名称。安装器验证脚本会安装应用，只应在一次性的 CI 环境中执行。打包脚本本身不会安装应用。
 
 ## 许可证与运行依赖
 

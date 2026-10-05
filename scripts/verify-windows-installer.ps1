@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Run this installation smoke test only on an ephemeral GitHub runner.' }
 $root = Split-Path -Parent $PSScriptRoot
-$setup = Join-Path $root "dist\tamiops-$env:VERSION-windows-$env:ARCH-setup.exe"
-$install = Join-Path $env:RUNNER_TEMP 'tamiops-installer-smoke'
-$data = Join-Path $env:RUNNER_TEMP 'tamiops-installer-data'
+$setup = Join-Path $root "dist\tamias-$env:VERSION-windows-$env:ARCH-setup.exe"
+$install = Join-Path $env:RUNNER_TEMP 'tamias-installer-smoke'
+$data = Join-Path $env:RUNNER_TEMP 'tamias-installer-data'
 if (Test-Path $install) { throw "Refusing to overwrite an existing test install: $install" }
 New-Item -ItemType Directory -Path $data -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $data 'keep.txt') -Value 'Preserve application data'
@@ -14,7 +14,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
-public static class TamiopsInstallerWindowProbe
+public static class TamiasInstallerWindowProbe
 {
     public sealed class WindowInfo
     {
@@ -76,7 +76,7 @@ public static class TamiopsInstallerWindowProbe
     }
 }
 '@
-if (-not ('TamiopsInstallerWindowProbe' -as [type])) {
+if (-not ('TamiasInstallerWindowProbe' -as [type])) {
     Add-Type -TypeDefinition $windowProbeSource -Language CSharp
 }
 
@@ -90,19 +90,19 @@ function Write-LogTail([string] $Path, [string] $Label) {
     }
 }
 
-$log = Join-Path $env:RUNNER_TEMP 'tamiops-installer.log'
+$log = Join-Path $env:RUNNER_TEMP 'tamias-installer.log'
 $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$install`"", "/LOG=`"$log`"") -PassThru
 if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'Installer timed out' }
 if ($process.ExitCode -ne 0) {
     Write-LogTail $log 'Installer log'
     throw "Installer exited with $($process.ExitCode)"
 }
-$exe = Join-Path $install 'tamiops.exe'
-foreach ($file in @('tamiops.exe', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'unins000.exe')) {
+$exe = Join-Path $install 'tamias.exe'
+foreach ($file in @('tamias.exe', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'unins000.exe')) {
     if (-not (Test-Path (Join-Path $install $file))) { throw "Installed payload missing $file" }
 }
-$stdout = Join-Path $env:RUNNER_TEMP 'tamiops-version.txt'
-$versionStderr = Join-Path $env:RUNNER_TEMP 'tamiops-version.stderr.txt'
+$stdout = Join-Path $env:RUNNER_TEMP 'tamias-version.txt'
+$versionStderr = Join-Path $env:RUNNER_TEMP 'tamias-version.stderr.txt'
 $versionProcess = Start-Process -FilePath $exe -ArgumentList '-version' -RedirectStandardOutput $stdout -RedirectStandardError $versionStderr -PassThru
 if (-not $versionProcess.WaitForExit(30000)) {
     $versionProcess.Kill()
@@ -118,8 +118,8 @@ if ($versionProcess.ExitCode -ne 0 -or $versionOutput -ne $env:VERSION) {
     throw "Installed application version mismatch (exit=$($versionProcess.ExitCode), output='$versionOutput', expected='$env:VERSION')"
 }
 
-$appStdout = Join-Path $env:RUNNER_TEMP 'tamiops-startup.stdout.txt'
-$appStderr = Join-Path $env:RUNNER_TEMP 'tamiops-startup.stderr.txt'
+$appStdout = Join-Path $env:RUNNER_TEMP 'tamias-startup.stdout.txt'
+$appStderr = Join-Path $env:RUNNER_TEMP 'tamias-startup.stderr.txt'
 $app = $null
 $startupFailure = $null
 $window = $null
@@ -130,20 +130,20 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         $app.Refresh()
-        $windows = [TamiopsInstallerWindowProbe]::GetForProcess([uint32] $app.Id)
-        $window = $windows | Where-Object { $_.Visible -and $_.Title -eq 'tamiops' } | Select-Object -First 1
+        $windows = [TamiasInstallerWindowProbe]::GetForProcess([uint32] $app.Id)
+        $window = $windows | Where-Object { $_.Visible -and $_.Title -eq '小花鼠' } | Select-Object -First 1
         if ($null -ne $window -or $app.HasExited) { break }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
 
     $app.Refresh()
-    $windows = [TamiopsInstallerWindowProbe]::GetForProcess([uint32] $app.Id)
-    $window = $windows | Where-Object { $_.Visible -and $_.Title -eq 'tamiops' } | Select-Object -First 1
+    $windows = [TamiasInstallerWindowProbe]::GetForProcess([uint32] $app.Id)
+    $window = $windows | Where-Object { $_.Visible -and $_.Title -eq '小花鼠' } | Select-Object -First 1
     try { $mainWindowHandleSnapshot = $app.MainWindowHandle } catch { $mainWindowHandleSnapshot = "unavailable: $($_.Exception.Message)" }
     if ($app.HasExited) {
         $startupFailure = "Installed desktop application exited during startup (exit=$($app.ExitCode))"
     } elseif ($null -eq $window) {
-        $startupFailure = 'Installed desktop application did not create a visible top-level window titled tamiops within 30 seconds'
+        $startupFailure = 'Installed desktop application did not create a visible top-level window titled 小花鼠 within 30 seconds'
     } else {
         Write-Host "Installed desktop application created visible window handle $($window.Handle) (owner=$($window.Owner), class=$($window.ClassName))."
     }

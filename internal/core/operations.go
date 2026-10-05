@@ -435,6 +435,13 @@ func makeTreeDirectories(ctx context.Context, s *Service, c Connection, st stora
 }
 
 func deleteEmptyDirectory(ctx context.Context, s *Service, connectionID string, st storage.Store, key string) error {
+	c, err := s.connection(connectionID)
+	if err != nil {
+		return err
+	}
+	if err := checkWriteAccess(c, writeDelete); err != nil {
+		return err
+	}
 	if err := s.checkManagedResource(ctx, connectionID, key); err != nil {
 		return err
 	}
@@ -454,10 +461,6 @@ func deleteEmptyDirectory(ctx context.Context, s *Service, connectionID string, 
 	emptyStore, ok := st.(storage.EmptyDirectoryStore)
 	if !ok {
 		return fmt.Errorf("%w: 存储不支持原子空目录删除，已保留目录", storage.ErrUnsupported)
-	}
-	c, err := s.connection(connectionID)
-	if err != nil {
-		return err
 	}
 	op := ID()
 	evidence := operationReceipt{Kind: "rmdir", SourceConnection: connectionID, SourcePath: key, Source: storage.Entry{Path: key, IsDir: true}, Step: "prepared"}
@@ -564,6 +567,9 @@ func (b Backend) deleteTree(ctx context.Context, key, token string) error {
 }
 
 func (b Backend) deleteLocked(ctx context.Context, st storage.Store, c Connection, key string, cond storage.Condition) error {
+	if err := checkWriteAccess(c, writeDelete); err != nil {
+		return err
+	}
 	if err := b.Service.checkManagedResource(ctx, c.ID, key); err != nil {
 		return err
 	}

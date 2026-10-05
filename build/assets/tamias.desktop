@@ -1,8 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=tamiops
+Name=Tamias
+Name[zh_CN]=小花鼠
 Comment=WebDAV and S3 storage workspace
-Exec=tamiops
-Icon=tamiops
+Exec=tamias
+Icon=tamias
 Terminal=false
 Categories=Utility;Network;FileTransfer;

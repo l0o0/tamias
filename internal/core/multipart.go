@@ -33,7 +33,7 @@ func (s *Service) putRemote(ctx context.Context, connectionID string, st storage
 	if err != nil {
 		return storage.Entry{}, err
 	}
-	if !ok || !c.Capabilities.MultipartConditional || size < 2*multipartPartSize {
+	if !ok || c.WriteMode == storage.WriteModeCopy || !c.Capabilities.MultipartConditional || size < 2*multipartPartSize {
 		return st.Put(ctx, key, f, size, cond)
 	}
 	hash, _, err := fileSHA256(f)
@@ -171,7 +171,7 @@ func (s *Service) ResumeUpload(ctx context.Context, id string) (storage.Entry, e
 	if err != nil {
 		return storage.Entry{}, err
 	}
-	if !c.Capabilities.MultipartConditional {
+	if !canWriteStrict(c) || !c.Capabilities.MultipartConditional {
 		return storage.Entry{}, errors.New("请先重新验证分片条件提交能力")
 	}
 	if err = s.checkDAVLocks(ctx, u.ConnectionID, u.Path); err != nil {

@@ -81,7 +81,7 @@ func (s *Service) Handler(assets http.Handler) http.Handler {
 			func() {
 				defer finish()
 				if r.URL.Path == "/api/files/upload" {
-					result, err = (Backend{s, r.URL.Query().Get("connectionId")}).Put(r.Context(), r.URL.Query().Get("path"), r.Body, r.ContentLength, storage.Condition{IfNoneMatch: true})
+					result, err = (Backend{s, r.URL.Query().Get("connectionId")}).Upload(r.Context(), r.URL.Query().Get("path"), r.Body, r.ContentLength, storage.Condition{})
 				} else {
 					result, err = s.command(r)
 				}
@@ -126,6 +126,7 @@ func decode(r *http.Request, v any) error {
 
 type command struct {
 	ID             string `json:"id"`
+	Icon           string `json:"icon"`
 	Token          string `json:"token"`
 	ConnectionID   string `json:"connectionId"`
 	Path           string `json:"path"`
@@ -194,6 +195,8 @@ func (s *Service) command(r *http.Request) (any, error) {
 		return nil, err
 	}
 	switch r.URL.Path {
+	case "/api/jobs/icon":
+		return nil, s.UpdateJobIcon(c.ID, c.Icon)
 	case "/api/connections/test":
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
@@ -370,7 +373,7 @@ func (s *Service) AddGatewayContext(ctx context.Context, g Gateway) (Gateway, st
 	if err = validKey(g.Prefix); err != nil {
 		return g, "", err
 	}
-	if !g.ReadOnly && !c.Capabilities.ConditionalWrite {
+	if !g.ReadOnly && !canWriteStrict(c) {
 		return g, "", errors.New("请先验证存储条件写入能力")
 	}
 	if strings.TrimSpace(g.Name) == "" {
@@ -383,7 +386,7 @@ func (s *Service) AddGatewayContext(ctx context.Context, g Gateway) (Gateway, st
 		return g, "", errors.New("端口范围为 1024–65535")
 	}
 	if g.Username == "" {
-		g.Username = "tamiops"
+		g.Username = "tamias"
 	}
 	if strings.Contains(g.Username, ":") {
 		return g, "", errors.New("用户名不能包含冒号")
@@ -457,7 +460,7 @@ func (s *Service) StartGateway(id string) error {
 		verified := false
 		for _, c := range s.cfg.Connections {
 			if c.ID == g.ConnectionID {
-				verified = c.Tested && c.Capabilities.ConditionalWrite
+				verified = c.Tested && canWriteStrict(c)
 			}
 		}
 		if !verified {
@@ -492,7 +495,7 @@ func (s *Service) StartGateway(id string) error {
 	if err != nil {
 		return errors.New("端口已被占用，请选择其他端口")
 	}
-	gwHandler := gateway.NewHandler(gateway.Config{Username: g.Username, Password: password, Prefix: g.Prefix, ReadOnly: g.ReadOnly, OnAccess: func(e gateway.AccessEvent) { s.gatewayAccess(id, e) }}, Backend{s, g.ConnectionID})
+	gwHandler := gateway.NewHandler(gateway.Config{Username: g.Username, Password: password, Prefix: g.Prefix, ReadOnly: g.ReadOnly, OnAccess: func(e gateway.AccessEvent) { s.gatewayAccess(id, e) }}, strictBackend{Backend: Backend{s, g.ConnectionID}})
 	if stats, ok := gwHandler.(interface{ Stats() gateway.AccessStats }); ok {
 		s.gatewayStats[id] = stats
 	}

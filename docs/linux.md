@@ -1,6 +1,8 @@
-# Linux AppImage
+# Tamias Linux AppImage
 
 下载 x64 AppImage，赋予执行权限后启动：
+
+已发布的 `0.2.0-beta.1` 使用改名前的 `tamiops` 文件名，以下下载示例对应这一版本。当前源码构建的程序为 `bin/tamias/tamias`，新的安装包使用 `tamias-<版本>-linux-amd64.AppImage` 文件名；使用新安装包时替换示例中的源文件名。
 
 ```sh
 chmod +x tamiops-0.2.0-beta.1-linux-amd64.AppImage
@@ -31,25 +33,25 @@ Ubuntu 24.04 及之后的系统可能通过 AppArmor 限制非特权用户命名
 
 ```sh
 mkdir -p "$HOME/Applications"
-cp tamiops-0.2.0-beta.1-linux-amd64.AppImage "$HOME/Applications/tamiops.AppImage"
-chmod +x "$HOME/Applications/tamiops.AppImage"
+cp tamiops-0.2.0-beta.1-linux-amd64.AppImage "$HOME/Applications/tamias.AppImage"
+chmod +x "$HOME/Applications/tamias.AppImage"
 
-sudo tee /etc/apparmor.d/tamiops-appimage >/dev/null <<EOF
+sudo tee /etc/apparmor.d/tamias-appimage >/dev/null <<EOF
 abi <abi/4.0>,
 include <tunables/global>
-profile tamiops-appimage "$HOME/Applications/tamiops.AppImage" flags=(unconfined) {
+profile tamias-appimage "$HOME/Applications/tamias.AppImage" flags=(unconfined) {
   userns,
 }
 EOF
-sudo apparmor_parser -r /etc/apparmor.d/tamiops-appimage
-"$HOME/Applications/tamiops.AppImage"
+sudo apparmor_parser -r /etc/apparmor.d/tamias-appimage
+"$HOME/Applications/tamias.AppImage"
 ```
 
 移动 AppImage 后须同步调整配置中的路径。卸载此授权：
 
 ```sh
-sudo apparmor_parser -R /etc/apparmor.d/tamiops-appimage
-sudo rm /etc/apparmor.d/tamiops-appimage
+sudo apparmor_parser -R /etc/apparmor.d/tamias-appimage
+sudo rm /etc/apparmor.d/tamias-appimage
 ```
 
 依据：[Ubuntu 24.04 发行说明中的用户命名空间限制](https://discourse.ubuntu.com/t/ubuntu-24-04-lts-noble-numbat-release-notes/39890)。保留 WebKit 沙箱；无需全局关闭 AppArmor 或用户命名空间限制。

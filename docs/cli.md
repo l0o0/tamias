@@ -1,6 +1,6 @@
-# CLI 指南
+# Tamias CLI 指南
 
-tamiops CLI 复用桌面应用的存储核心，无需 WebView 或图形会话。支持查看状态、管理连接、导入导出配置、执行同步及运行网关。
+Tamias CLI 复用桌面应用的存储核心，无需 WebView 或图形会话。支持查看状态、管理连接、导入导出配置、执行同步及运行网关。
 
 ## 构建
 
@@ -8,7 +8,7 @@ tamiops CLI 复用桌面应用的存储核心，无需 WebView 或图形会话�
 make cli
 ```
 
-产物为 `bin/cli/tamiops`，Windows 为 `bin/cli/tamiops.exe`。构建需要 Go 1.25.0 和支持 CGO 的 C 编译器。
+产物为 `bin/cli/tamias`，Windows 为 `bin/cli/tamias.exe`。构建需要 Go 1.25.0 和支持 CGO 的 C 编译器。源码入口仍为 `cmd/tami`。
 
 ## 数据目录
 
@@ -19,17 +19,17 @@ make cli
 所有参数必须放在子命令前：
 
 ```sh
-bin/cli/tamiops -data-dir ./tamiops-state status
-bin/cli/tamiops -data-dir ./tamiops-state diagnostics
+bin/cli/tamias -data-dir ./tamias-state status
+bin/cli/tamias -data-dir ./tamias-state diagnostics
 ```
 
 ## 配置与连接
 
 ```sh
-bin/cli/tamiops -data-dir ./tamiops-state export > tamiops-config.json
-bin/cli/tamiops -data-dir ./tamiops-state -input tamiops-config.json import
-bin/cli/tamiops -data-dir ./tamiops-state -input connection.json connection-add
-bin/cli/tamiops -data-dir ./tamiops-state -input credentials.json credentials
+bin/cli/tamias -data-dir ./tamias-state export > tamias-config.json
+bin/cli/tamias -data-dir ./tamias-state -input tamias-config.json import
+bin/cli/tamias -data-dir ./tamias-state -input connection.json connection-add
+bin/cli/tamias -data-dir ./tamias-state -input credentials.json credentials
 ```
 
 配置导出不包含秘密凭据。导入会新增连接、停用的同步、备份和迁移任务，以及停止的网关，并清除同步和备份任务的本地路径；重新配置路径、补充凭据并验证后才能使用。
@@ -51,8 +51,8 @@ bin/cli/tamiops -data-dir ./tamiops-state -input credentials.json credentials
 ## 同步
 
 ```sh
-bin/cli/tamiops -data-dir ./tamiops-state -job JOB_ID preview
-bin/cli/tamiops -data-dir ./tamiops-state -verify-writes -job JOB_ID -token PREVIEW_TOKEN run
+bin/cli/tamias -data-dir ./tamias-state -job JOB_ID preview
+bin/cli/tamias -data-dir ./tamias-state -verify-writes -job JOB_ID -token PREVIEW_TOKEN run
 ```
 
 将 `JOB_ID` 替换为已有任务标识，`PREVIEW_TOKEN` 替换为预览返回的令牌。核对预览中的删除清单后，包含删除的计划还需提供 `-confirm-deletes`。
@@ -62,13 +62,13 @@ bin/cli/tamiops -data-dir ./tamiops-state -verify-writes -job JOB_ID -token PREV
 ## 无界面服务
 
 ```sh
-bin/cli/tamiops -data-dir ./tamiops-state -verify-writes -gateways GATEWAY_ID serve
+bin/cli/tamias -data-dir ./tamias-state -verify-writes -gateways GATEWAY_ID serve
 ```
 
 `serve` 启动任务调度、维护服务及指定的已配置网关，直到收到退出信号。多个网关标识以逗号分隔；未指定 `-gateways` 时仅运行调度和维护服务。
 
 ## 凭据存储
 
-默认使用系统凭据库。无桌面环境可通过 `TAMIOPS_VAULT_KEY` 环境变量提供 Base64 编码的 32 字节密钥，启用本地 AES-GCM 凭据文件。
+默认使用系统凭据库。无桌面环境可通过 `TAMIAS_VAULT_KEY` 环境变量提供 Base64 编码的 32 字节密钥，启用本地 AES-GCM 凭据文件。
 
-密钥不会由应用持久化，后续运行必须提供同一密钥。兼容旧变量 `TAMI_VAULT_KEY`，两者同时设置时优先使用 `TAMIOPS_VAULT_KEY`。配置导出不能替代凭据和密钥备份。
+密钥不会由应用持久化，后续运行必须提供同一密钥。兼容旧变量 `TAMIOPS_VAULT_KEY` 和 `TAMI_VAULT_KEY`；多个变量同时设置时，按 `TAMIAS_VAULT_KEY`、`TAMIOPS_VAULT_KEY`、`TAMI_VAULT_KEY` 的顺序选择。配置导出不能替代凭据和密钥备份。

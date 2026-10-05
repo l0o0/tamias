@@ -19,8 +19,8 @@ case "$ARCH" in
 	*) printf '%s\n' "ARCH must be arm64 or amd64: $ARCH" >&2; exit 2 ;;
 esac
 
-app="$root/bin/tamiops.app"
-executable="$app/Contents/MacOS/tamiops"
+app="$root/bin/tamias.app"
+executable="$app/Contents/MacOS/tamias"
 license="$root/LICENSE"
 resources="$root/build/macos/installer"
 for path in "$app/Contents/Info.plist" "$executable" "$license" "$resources/Welcome.html" "$resources/Conclusion.html"; do
@@ -55,7 +55,7 @@ trap 'exit 1' HUP INT TERM
 mkdir -p "$root/dist"
 
 mkdir -p "$stage/root" "$stage/resources"
-ditto "$app" "$stage/root/tamiops.app"
+ditto "$app" "$stage/root/tamias.app"
 ditto "$resources/Welcome.html" "$stage/resources/Welcome.html"
 ditto "$resources/Conclusion.html" "$stage/resources/Conclusion.html"
 textutil -convert rtf -font Menlo -fontsize 10 -output "$stage/resources/License.rtf" "$license"
@@ -71,7 +71,7 @@ cat > "$stage/components.plist" <<'PLIST'
 <array>
   <dict>
     <key>RootRelativeBundlePath</key>
-    <string>tamiops.app</string>
+    <string>tamias.app</string>
     <key>BundleIsRelocatable</key>
     <false/>
     <key>BundleIsVersionChecked</key>
@@ -107,17 +107,17 @@ pkgbuild \
 	--version "$VERSION" \
 	--install-location /Applications \
 	--ownership recommended \
-	"$stage/tamiops-component.pkg"
+	"$stage/tamias-component.pkg"
 
 productbuild \
 	--synthesize \
 	--product "$stage/requirements.plist" \
-	--package "$stage/tamiops-component.pkg" \
+	--package "$stage/tamias-component.pkg" \
 	"$stage/Distribution.base.xml"
 
 awk '
 /<choices-outline>/ && !inserted {
-	print "  <title>tamiops</title>"
+	print "  <title>小花鼠 Tamias</title>"
 	print "  <welcome file=\"Welcome.html\"/>"
 	print "  <license file=\"License.rtf\"/>"
 	print "  <conclusion file=\"Conclusion.html\"/>"
@@ -127,7 +127,7 @@ awk '
 END { if (!inserted) exit 1 }
 ' "$stage/Distribution.base.xml" > "$stage/Distribution.xml"
 
-output="$root/dist/tamiops-${VERSION}-macos-${ARCH}.pkg"
+output="$root/dist/tamias-${VERSION}-macos-${ARCH}.pkg"
 productbuild \
 	--distribution "$stage/Distribution.xml" \
 	--package-path "$stage" \
@@ -153,8 +153,8 @@ if ! grep -Fq "hostArchitectures=\"$pkg_arch\"" "$expanded_distribution"; then
 	printf '%s\n' "Distribution does not restrict installation to $pkg_arch" >&2
 	exit 1
 fi
-if ! find "$stage/expanded" -path '*/Payload/tamiops.app/Contents/MacOS/tamiops' -type f -print -quit | grep -q .; then
-	printf '%s\n' "Expanded product is missing the tamiops application payload" >&2
+if ! find "$stage/expanded" -path '*/Payload/tamias.app/Contents/MacOS/tamias' -type f -print -quit | grep -q .; then
+	printf '%s\n' "Expanded product is missing the Tamias application payload" >&2
 	exit 1
 fi
 if ! find "$stage/expanded" -name 'License.rtf' -type f -print -quit | grep -q .; then

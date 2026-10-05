@@ -1,4 +1,4 @@
-# tamiops 前端
+# Tamias 前端
 
 Vue 3、TypeScript 与 Vite 构建的桌面界面，调用本地 `/api` handler。开发服务代理到 `127.0.0.1:9240`。
 

@@ -311,8 +311,23 @@ func hashRemote(ctx context.Context, b Backend, key, etag string) (localFile, st
 	if b.Service != nil && b.Service.Preferences().MaxFileBytes > 0 {
 		limit = b.Service.Preferences().MaxFileBytes
 	}
-	if entry.IsDir || entry.Size < 0 || entry.Size > limit {
+	if entry.IsDir || entry.Size > limit {
 		return localFile{}, storage.Entry{}, errors.New("远端文件大小或类型不受支持")
+	}
+	expectedSize := entry.Size
+	if expectedSize < 0 {
+		if !strongTag(etag) {
+			return localFile{}, storage.Entry{}, errors.New("远端缺少可靠版本标识，不能核验内容")
+		}
+		current, statErr := b.Stat(ctx, key)
+		if statErr != nil {
+			return localFile{}, storage.Entry{}, statErr
+		}
+		if current.IsDir || current.ETag != etag || current.Size < 0 || current.Size > limit {
+			return localFile{}, storage.Entry{}, storage.ErrConflict
+		}
+		expectedSize = current.Size
+		entry.Size = expectedSize
 	}
 	h := sha256.New()
 	reader := io.Reader(r)
@@ -323,7 +338,7 @@ func hashRemote(ctx context.Context, b Backend, key, etag string) (localFile, st
 	if err != nil {
 		return localFile{}, storage.Entry{}, err
 	}
-	if n != entry.Size || n > limit {
+	if n != expectedSize || n > limit {
 		return localFile{}, storage.Entry{}, errors.New("远端文件内容长度与元数据不一致")
 	}
 	after, err := b.Stat(ctx, key)
@@ -337,6 +352,9 @@ func hashRemote(ctx context.Context, b Backend, key, etag string) (localFile, st
 }
 
 func (s *Service) AddJob(j Job) (Job, error) {
+	if err := validateJobIcon(j.Icon); err != nil {
+		return j, err
+	}
 	if _, err := s.connection(j.ConnectionID); err != nil {
 		return j, err
 	}
@@ -391,6 +409,7 @@ func (s *Service) AddJob(j Job) (Job, error) {
 	j.ID = ID()
 	j.LocalPath = local
 	j.Status = "idle"
+	j.ActiveAction = ""
 	j.Detail = "先预览，再同步；不自动传播删除"
 	j.Enabled = true
 	if j.DeleteThreshold <= 0 {
@@ -408,6 +427,9 @@ func (s *Service) UpdateJob(j Job) (Job, error) {
 	runLock.Lock()
 	defer runLock.Unlock()
 
+	if err := validateJobIcon(j.Icon); err != nil {
+		return j, err
+	}
 	if strings.TrimSpace(j.Name) == "" {
 		return j, errors.New("请填写任务名称")
 	}
@@ -483,6 +505,7 @@ func (s *Service) UpdateJob(j Job) (Job, error) {
 	}
 	j.LocalPath = local
 	j.Status = old.Status
+	j.ActiveAction = ""
 	j.LastRun = old.LastRun
 	j.LastScanAt = old.LastScanAt
 	j.LastScanSummary = old.LastScanSummary
@@ -549,6 +572,7 @@ func (s *Service) ResumeJob(id string) error {
 		}
 		j.Enabled = true
 		j.Status = "idle"
+		j.ActiveAction = ""
 		j.Detail = "任务已恢复，正在等待重新核对"
 		err := s.saveLocked()
 		s.mu.Unlock()
@@ -569,6 +593,7 @@ func (s *Service) CancelJob(id string) error {
 		if s.cfg.Jobs[i].ID == id {
 			found = true
 			s.cfg.Jobs[i].Enabled = false
+			s.cfg.Jobs[i].ActiveAction = ""
 			if s.cfg.Jobs[i].Status != "running" {
 				s.cfg.Jobs[i].Status = "paused"
 			}
@@ -600,6 +625,7 @@ func (s *Service) RetryJob(ctx context.Context, id string) (Job, error) {
 			}
 			s.cfg.Jobs[i].Enabled = true
 			s.cfg.Jobs[i].Status = "retrying"
+			s.cfg.Jobs[i].ActiveAction = ""
 			s.cfg.Jobs[i].Detail = "正在重新核对失败项"
 			found = true
 			break
@@ -616,13 +642,17 @@ func (s *Service) RetryJob(ctx context.Context, id string) (Job, error) {
 	s.mu.Unlock()
 	p, err := s.Preview(ctx, id)
 	if err != nil {
-		s.setJobAttention(id, "重试前核对失败："+err.Error(), "error")
+		status := "error"
+		if errors.Is(err, ErrPendingOperation) {
+			status = "needs_attention"
+		}
+		s.setJobAttention(id, "重试前核对失败："+err.Error(), status)
 		return Job{}, err
 	}
 	j, runErr := s.RunPlan(ctx, id, p.Token)
 	if runErr != nil {
 		status := "error"
-		if strings.Contains(runErr.Error(), "冲突") || strings.Contains(runErr.Error(), "确认") {
+		if errors.Is(runErr, ErrPendingOperation) || strings.Contains(runErr.Error(), "冲突") || strings.Contains(runErr.Error(), "确认") {
 			status = "needs_attention"
 		}
 		s.setJobAttention(id, "重试未执行："+runErr.Error(), status)
@@ -652,6 +682,11 @@ func (s *Service) ResolveConflict(ctx context.Context, id, key, choice string) (
 	}
 	if j.Status == "running" {
 		return j, errors.New("任务正在执行")
+	}
+	if choice == "local" || choice == "keep-both" {
+		if err = s.validateSyncWritePolicy(j.ConnectionID, []Action{{Kind: "upload"}}); err != nil {
+			return j, err
+		}
 	}
 	root, err := os.OpenRoot(j.LocalPath)
 	if err != nil {
@@ -812,6 +847,22 @@ func (s *Service) job(id string) (Job, error) {
 	}
 	return Job{}, storage.ErrNotFound
 }
+
+func (s *Service) setJobActiveAction(id, action string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.cfg.Jobs {
+		if s.cfg.Jobs[i].ID != id {
+			continue
+		}
+		if action != "" && (!s.cfg.Jobs[i].Enabled || s.cfg.Jobs[i].Status != "running") {
+			return
+		}
+		s.cfg.Jobs[i].ActiveAction = action
+		return
+	}
+}
+
 func hashLocal(root *os.Root, key string) (localFile, error) {
 	return hashLocalLimit(root, key, FileLimit)
 }
@@ -893,10 +944,12 @@ func scanLocalFilteredProtected(ctx context.Context, root *os.Root, limit int64,
 			}
 			return nil
 		}
-		if excludedPath(excludes, filepath.ToSlash(k)) {
-			if d.IsDir() {
+		key := filepath.ToSlash(k)
+		if d.IsDir() {
+			if excludedPath(excludes, key) {
 				return filepath.SkipDir
 			}
+		} else if syncPathExcluded(excludes, key) {
 			return nil
 		}
 		if strings.HasPrefix(d.Name(), ".tami-download-") || strings.HasPrefix(d.Name(), ".tami-sync-old-") || strings.HasPrefix(d.Name(), ".tami-sync-delete-") {
@@ -971,7 +1024,11 @@ func scanRemoteFiltered(ctx context.Context, st storage.Store, prefix string, ex
 			if isManagedPath(rel) || isManagedPath(e.Path) {
 				continue
 			}
-			if excludedPath(excludes, rel) {
+			if e.IsDir {
+				if excludedPath(excludes, rel) {
+					continue
+				}
+			} else if syncPathExcluded(excludes, rel) {
 				continue
 			}
 			if err := validSyncPath(e.Path); err != nil {
@@ -999,6 +1056,10 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 	if j.Status == "running" {
 		return Plan{}, errors.New("任务正在执行")
 	}
+	if err = s.reconcileJobOperations(ctx, j); err != nil {
+		return Plan{}, err
+	}
+	s.setJobActiveAction(id, "")
 	scanID, scanErr := s.beginSyncScan(j)
 	if scanErr != nil {
 		return Plan{}, scanErr
@@ -1018,6 +1079,10 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 		return Plan{}, err
 	}
 	st, err := s.store(j.ConnectionID)
+	if err != nil {
+		return Plan{}, err
+	}
+	connection, err := s.connection(j.ConnectionID)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -1073,7 +1138,7 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 	}
 	retired := map[string]bool{}
 	pathProtected := func(k string) bool {
-		if isManagedPath(k) {
+		if isManagedPath(k) || isSyncMetadataPath(k) {
 			return true
 		}
 		for protected := range protectedLocal {
@@ -1112,11 +1177,6 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 	for k := range retired {
 		retiredPaths = append(retiredPaths, k)
 	}
-	if len(retiredPaths) > 0 {
-		if err = s.retireSyncPaths(id, retiredPaths); err != nil {
-			return Plan{}, err
-		}
-	}
 	plan := Plan{Token: ID(), JobID: id, ConfigFingerprint: syncPlanConfigFingerprint(j), Created: time.Now(), Actions: []Action{}, DeletePaths: []string{}}
 	keys := map[string]bool{}
 	for k := range local {
@@ -1126,7 +1186,7 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 		keys[k] = true
 	}
 	for k := range bases {
-		if !excludedPath(j.Exclude, k) {
+		if !syncPathExcluded(j.Exclude, k) {
 			keys[k] = true
 		}
 	}
@@ -1380,7 +1440,8 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 		if a.Kind == "download" && !strongTag(remote[a.Path].ETag) {
 			a.Kind, a.Reason = "conflict", "远端缺少可靠版本标识，无法安全下载和建立基线"
 		}
-		if (a.Kind == "download" || a.Kind == "upload" && remote[a.Path].Path != "" || a.BaselineMerge) && remote[a.Path].Size > s.Preferences().MaxFileBytes {
+		needsRemoteSizeBound := a.Kind == "download" || a.Kind == "upload" && remote[a.Path].Path != "" && connection.KeepRecovery || a.BaselineMerge
+		if needsRemoteSizeBound && remote[a.Path].Size > s.Preferences().MaxFileBytes {
 			a.Kind, a.BaselineMerge, a.Reason = "conflict", false, "远端文件超过当前单文件上限"
 		}
 		if a.BaselineMerge && !strongTag(remote[a.Path].ETag) {
@@ -1400,6 +1461,16 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 		threshold = defaultDeleteThreshold
 	}
 	plan.RequiresDeleteConfirmation = plan.DeleteCount >= threshold
+	if err = s.validateSyncWritePolicy(j.ConnectionID, plan.Actions); err != nil {
+		return Plan{}, err
+	}
+	// A denied write or delete must leave the prior plan, queue, and baselines
+	// intact so the user can review or change the connection policy.
+	if len(retiredPaths) > 0 {
+		if err = s.retireSyncPaths(id, retiredPaths); err != nil {
+			return Plan{}, err
+		}
+	}
 	if err = s.ensureSyncSchema(); err != nil {
 		return Plan{}, err
 	}
@@ -1432,6 +1503,26 @@ func (s *Service) Preview(ctx context.Context, id string) (preview Plan, err err
 	s.plans[plan.Token] = plan
 	s.mu.Unlock()
 	return plan, nil
+}
+
+func (s *Service) validateSyncWritePolicy(connectionID string, actions []Action) error {
+	connection, err := s.connection(connectionID)
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		switch action.Kind {
+		case "upload", "mkdir-remote":
+			if !canUpload(connection) {
+				return errors.New("此同步计划需要远端写入；请验证条件写入能力，或切换到兼容上传模式")
+			}
+		case "delete-remote":
+			if !canDelete(connection) {
+				return errors.New("此同步计划需要条件删除能力，已保留远端文件")
+			}
+		}
+	}
+	return nil
 }
 
 func equivalentSyncPlan(a, b Plan) bool {
@@ -1531,7 +1622,8 @@ func syncPlanConfigFingerprint(j Job) string {
 		Direction       string
 		Exclude         []string
 		DeleteThreshold int
-	}{j.ConnectionID, j.RemotePath, filepath.Clean(j.LocalPath), j.Direction, append([]string(nil), j.Exclude...), j.DeleteThreshold}
+		BehaviorVersion string
+	}{j.ConnectionID, j.RemotePath, filepath.Clean(j.LocalPath), j.Direction, append([]string(nil), j.Exclude...), j.DeleteThreshold, "sync-exclusion-ds-store-v1"}
 	raw, _ := json.Marshal(config)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
@@ -1622,6 +1714,9 @@ func (s *Service) RunPlan(ctx context.Context, id, token string, confirmDeletes 
 			return Job{}, err
 		}
 	}
+	if err = s.validateSyncWritePolicy(job.ConnectionID, p.Actions); err != nil {
+		return Job{}, err
+	}
 	if p.RequiresDeleteConfirmation && (len(confirmDeletes) == 0 || !confirmDeletes[0]) {
 		return Job{}, errors.New("此预览包含大量删除，请明确确认后再执行")
 	}
@@ -1654,6 +1749,7 @@ func (s *Service) RunPlan(ctx context.Context, id, token string, confirmDeletes 
 	jobCtx, cancel := context.WithCancel(ctx)
 	s.jobCancels[id] = cancel
 	s.cfg.Jobs[index].Status = "running"
+	s.cfg.Jobs[index].ActiveAction = ""
 	s.cfg.Jobs[index].Enabled = true
 	s.cfg.Jobs[index].Progress = 0
 	s.cfg.Jobs[index].QueueTotal = len(p.Actions)
@@ -1714,6 +1810,7 @@ func (s *Service) RunPlan(ctx context.Context, id, token string, confirmDeletes 
 		if err = s.setQueue(id, a, "running", nil); err != nil {
 			break
 		}
+		s.setJobActiveAction(id, a.Kind)
 		err = s.executeSyncAction(jobCtx, j, root, b, a)
 		if err != nil {
 			queueState := "error"
@@ -1728,6 +1825,7 @@ func (s *Service) RunPlan(ctx context.Context, id, token string, confirmDeletes 
 		}
 		counts.record(a)
 		s.updateProgress(id, counts.Completed, len(p.Actions))
+		s.setJobActiveAction(id, "")
 	}
 	return s.finishJob(id, err, counts)
 }
@@ -1783,6 +1881,9 @@ func (s *Service) executeSyncAction(ctx context.Context, j Job, root *os.Root, b
 		return err
 	}
 	if err := s.checkManagedResource(ctx, j.ConnectionID, path.Join(j.RemotePath, a.Path)); err != nil {
+		return err
+	}
+	if err := s.validateSyncWritePolicy(j.ConnectionID, []Action{a}); err != nil {
 		return err
 	}
 	if err := rejectLocalSymlinkPath(root, a.Path); err != nil {
@@ -2057,6 +2158,13 @@ func rejectLocalSymlinkPath(root *os.Root, key string) error {
 }
 
 func (s *Service) recordLocalRecovery(root *os.Root, key, want string, j Job) error {
+	connection, err := s.connection(j.ConnectionID)
+	if err != nil {
+		return err
+	}
+	if !connection.KeepRecovery {
+		return nil
+	}
 	v, err := s.hashLocal(root, key)
 	if err != nil || v.Hash != want {
 		return storage.ErrConflict
@@ -2171,6 +2279,16 @@ func preserveAsConflict(root *os.Root, source, original, side string) error {
 	return errors.New("无法安全创建冲突副本")
 }
 
+func preserveQuarantineAsConflict(root *os.Root, quarantine, original, side string) error {
+	if err := preserveAsConflict(root, quarantine, original, side); err != nil {
+		return errors.Join(storage.ErrConflict, fmt.Errorf("无法保留同步期间发现的本地修改，临时文件 %q 已保留：%w", quarantine, err))
+	}
+	if err := root.Remove(quarantine); err != nil {
+		return errors.Join(storage.ErrConflict, fmt.Errorf("冲突副本已保存，但临时文件 %q 清理失败：%w", quarantine, err))
+	}
+	return storage.ErrConflict
+}
+
 func (s *Service) downloadSafely(ctx context.Context, root *os.Root, b Backend, key string, a Action, jobID string) error {
 	r, remote, err := b.Open(ctx, key, a.RemoteETag)
 	if err != nil {
@@ -2179,6 +2297,19 @@ func (s *Service) downloadSafely(ctx context.Context, root *os.Root, b Backend, 
 	defer r.Close()
 	if remote.IsDir || remote.ETag != a.RemoteETag {
 		return storage.ErrConflict
+	}
+	if remote.Size < 0 {
+		// Chunked GET responses can omit Content-Length. Pin the expected size
+		// to the same strong version, then retain the byte-count and final Stat
+		// checks below before installing any local content.
+		current, statErr := b.Stat(ctx, key)
+		if statErr != nil {
+			return statErr
+		}
+		if current.IsDir || current.Size < 0 || !strongTag(current.ETag) || current.ETag != a.RemoteETag {
+			return storage.ErrConflict
+		}
+		remote.Size = current.Size
 	}
 	progress := &syncProgressReader{r: r, progress: func(done int64) { s.updateTransferProgress(jobID, a.Path, a.Kind, done, remote.Size) }}
 	spool, err := s.spool(ctx, progress, remote.Size)
@@ -2224,6 +2355,7 @@ func (s *Service) downloadSafely(ctx context.Context, root *os.Root, b Backend, 
 
 	s.writes.Lock()
 	defer s.writes.Unlock()
+	oldQuarantine := ""
 	current, statErr := root.Lstat(a.Path)
 	if a.LocalHash == "" {
 		if !errors.Is(statErr, os.ErrNotExist) {
@@ -2252,44 +2384,76 @@ func (s *Service) downloadSafely(ctx context.Context, root *os.Root, b Backend, 
 		if err = s.recordLocalRecovery(root, a.Path, a.LocalHash, Job{ID: jobID, ConnectionID: b.ConnectionID}); err != nil {
 			return err
 		}
-		quarantine := path.Join(parent, ".tami-sync-old-"+ID())
-		if err = root.Rename(a.Path, quarantine); err != nil {
+		oldQuarantine = path.Join(parent, ".tami-sync-old-"+ID())
+		if err = root.Rename(a.Path, oldQuarantine); err != nil {
 			return err
 		}
-		moved, moveErr := s.hashLocal(root, quarantine)
+		moved, moveErr := s.hashLocal(root, oldQuarantine)
 		if moveErr != nil || moved.Hash != a.LocalHash {
-			_ = preserveAsConflict(root, quarantine, a.Path, "local")
-			_ = root.Remove(quarantine)
-			return storage.ErrConflict
+			return preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local")
 		}
 		if err = root.Link(tmp, a.Path); err != nil {
-			// The old content is already in the recovery store. Never replace a path
-			// that another process created while the destination was vacant.
-			if _, e := root.Lstat(a.Path); errors.Is(e, os.ErrNotExist) {
-				_ = root.Link(quarantine, a.Path)
+			// Keep the old inode until it has either been restored or preserved as
+			// a visible conflict. A concurrently created destination is untouched.
+			if _, inspectErr := root.Lstat(a.Path); errors.Is(inspectErr, os.ErrNotExist) {
+				if restoreErr := root.Link(oldQuarantine, a.Path); restoreErr != nil {
+					return errors.Join(storage.ErrConflict, fmt.Errorf("无法回滚本地文件；旧版本仍保留在 %q：%w", oldQuarantine, restoreErr))
+				}
+				if removeErr := root.Remove(oldQuarantine); removeErr != nil {
+					return errors.Join(storage.ErrConflict, fmt.Errorf("本地文件已回滚，但临时文件 %q 清理失败：%w", oldQuarantine, removeErr))
+				}
+			} else if inspectErr == nil {
+				return preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local")
+			} else {
+				return errors.Join(storage.ErrConflict, fmt.Errorf("无法检查并回滚本地文件；旧版本仍保留在 %q：%w", oldQuarantine, inspectErr))
 			}
-			_ = root.Remove(quarantine)
 			return storage.ErrConflict
-		}
-		if err = root.Remove(quarantine); err != nil {
-			return err
 		}
 	}
 	installed, err := s.hashLocal(root, a.Path)
 	if err != nil {
+		if oldQuarantine != "" {
+			return errors.Join(err, preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local"))
+		}
 		return err
 	}
 	if installed.Hash != downloadHash {
+		if oldQuarantine != "" {
+			return preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local")
+		}
 		return storage.ErrConflict
 	}
 	latest, err = b.Stat(ctx, key)
 	if err != nil {
+		if oldQuarantine != "" {
+			return errors.Join(err, preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local"))
+		}
 		return err
 	}
 	if latest.ETag != a.RemoteETag {
+		if oldQuarantine != "" {
+			return preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local")
+		}
 		return storage.ErrConflict
 	}
-	return s.saveBaseline(jobID, a.Path, downloadHash, latest.ETag)
+	if oldQuarantine != "" {
+		moved, moveErr := s.hashLocal(root, oldQuarantine)
+		if moveErr != nil || moved.Hash != a.LocalHash {
+			return preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local")
+		}
+	}
+	if err = s.saveBaseline(jobID, a.Path, downloadHash, latest.ETag); err != nil {
+		if oldQuarantine != "" {
+			return errors.Join(err, preserveQuarantineAsConflict(root, oldQuarantine, a.Path, "local"))
+		}
+		return err
+	}
+	if oldQuarantine != "" {
+		if err = root.Remove(oldQuarantine); err != nil {
+			return fmt.Errorf("已完成下载，但临时旧文件 %q 清理失败：%w", oldQuarantine, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) deleteLocalSafely(root *os.Root, key, want string, j Job) error {
@@ -2308,9 +2472,11 @@ func (s *Service) deleteLocalSafely(root *os.Root, key, want string, j Job) erro
 	}
 	moved, err := s.hashLocal(root, quarantine)
 	if err != nil || moved.Hash != want {
-		_ = preserveAsConflict(root, quarantine, key, "local")
-		_ = root.Remove(quarantine)
-		return storage.ErrConflict
+		return preserveQuarantineAsConflict(root, quarantine, key, "local")
+	}
+	latest, err := s.hashLocal(root, quarantine)
+	if err != nil || latest.Hash != want {
+		return preserveQuarantineAsConflict(root, quarantine, key, "local")
 	}
 	if err = root.Remove(quarantine); err != nil {
 		return err
@@ -2329,6 +2495,7 @@ func (s *Service) finishJob(id string, runErr error, counts syncRunCounts) (Job,
 	for i := range s.cfg.Jobs {
 		if s.cfg.Jobs[i].ID == id {
 			x := &s.cfg.Jobs[i]
+			x.ActiveAction = ""
 			x.LastRun = time.Now().Format(time.RFC3339)
 			x.Status = "synced"
 			x.Detail = syncCompletionDetail(x.QueueTotal, counts)

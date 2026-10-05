@@ -84,7 +84,7 @@ func TestExternalEditorRestoresOriginalAppImageAndGtkEnvironment(t *testing.T) {
 }
 
 func TestAutoStartContentCarriesDataDirectory(t *testing.T) {
-	executable := "/Applications/tamiops.app/Contents/MacOS/tamiops"
+	executable := "/Applications/tamias.app/Contents/MacOS/tamias"
 	dataDir := "/Users/李明/Library/Application Support/Tami & Data"
 
 	macContent, err := renderAutoStartContent("darwin", executable, dataDir)
@@ -116,10 +116,10 @@ func TestAutoStartContentCarriesDataDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(linuxContent, "\nName=tamiops\n") {
+	if !strings.Contains(linuxContent, "\nName=Tamias\n") {
 		t.Fatalf("desktop entry did not show the product name: %s", linuxContent)
 	}
-	wantExec := "Exec=\"/Applications/tamiops.app/Contents/MacOS/tamiops\" --data-dir=\"/Users/李明/Library/Application Support/Tami & Data\""
+	wantExec := "Exec=\"/Applications/tamias.app/Contents/MacOS/tamias\" --data-dir=\"/Users/李明/Library/Application Support/Tami & Data\""
 	if !strings.Contains(linuxContent, wantExec) {
 		t.Fatalf("desktop entry did not quote executable and data dir: %s", linuxContent)
 	}

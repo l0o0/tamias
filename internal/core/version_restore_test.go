@@ -77,6 +77,7 @@ func setupVersionRestore(t *testing.T, current, historical string) (*Service, st
 
 func TestVersionRestoreWritesExactVersionAndKeepsReplacedContent(t *testing.T) {
 	s, connectionID, _, current := setupVersionRestore(t, "current contents", "historical contents")
+	setNormalRecoveryForTest(t, s, connectionID, true)
 	ctx := context.Background()
 	preview, err := s.previewVersionRestore(ctx, connectionID, "restore.txt", "version:opaque/id?do-not-rewrite")
 	if err != nil {

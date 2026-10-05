@@ -197,7 +197,7 @@ func (s *Service) CreateBackupJob(j BackupJob) (BackupJob, error) {
 	if err != nil {
 		return j, err
 	}
-	if !connection.Capabilities.ConditionalWrite {
+	if !canWriteStrict(connection) {
 		return j, errors.New("备份连接尚未验证条件写入能力")
 	}
 	if err := validateBackupLocation(j.LocalPath, j.RemotePrefix); err != nil {
@@ -323,7 +323,7 @@ func (s *Service) UpdateBackupJob(j BackupJob) (BackupJob, error) {
 	if err != nil {
 		return j, err
 	}
-	if !connection.Capabilities.ConditionalWrite {
+	if !canWriteStrict(connection) {
 		return j, errors.New("备份连接尚未验证条件写入能力")
 	}
 	if err = validateBackupLocation(j.LocalPath, j.RemotePrefix); err != nil {
@@ -436,6 +436,13 @@ func (s *Service) PreviewBackup(ctx context.Context, id string) (BackupPreview, 
 	if j.Status == "deleted" {
 		return BackupPreview{}, storage.ErrNotFound
 	}
+	connection, err := s.connection(j.ConnectionID)
+	if err != nil {
+		return BackupPreview{}, err
+	}
+	if !canWriteStrict(connection) {
+		return BackupPreview{}, errors.New("备份连接尚未验证条件写入能力")
+	}
 	if err = validateExcludePatterns(j.Exclude); err != nil {
 		return BackupPreview{}, err
 	}
@@ -525,6 +532,13 @@ func (s *Service) RunBackup(ctx context.Context, id, token string) (BackupSnapsh
 	if j.Status == "deleted" {
 		return BackupSnapshot{}, storage.ErrNotFound
 	}
+	connection, err := s.connection(j.ConnectionID)
+	if err != nil {
+		return BackupSnapshot{}, err
+	}
+	if !canWriteStrict(connection) {
+		return BackupSnapshot{}, errors.New("备份连接尚未验证条件写入能力")
+	}
 	if token == "" {
 		return BackupSnapshot{}, errors.New("请先预览备份内容")
 	}
@@ -584,7 +598,7 @@ func (s *Service) RunBackup(ctx context.Context, id, token string) (BackupSnapsh
 	}
 	base := backupSnapshotBase(j.RemotePrefix, snapshot.ID)
 	backend := Backend{Service: s, ConnectionID: j.ConnectionID}
-	if err = ensureRemoteDirectory(ctx, backend, base); err != nil {
+	if err = ensureRemoteDirectoryStrict(ctx, backend, base); err != nil {
 		return s.finishBackupSnapshot(snapshot, fmt.Errorf("创建备份目录失败：%w", err))
 	}
 	manifestETag, err := saveBackupManifest(ctx, backend, path.Join(base, "manifest.json"), manifest, "")
@@ -607,7 +621,7 @@ func (s *Service) RunBackup(ctx context.Context, id, token string) (BackupSnapsh
 			_ = s.updateBackupItem(snapshot.ID, *f)
 			continue
 		}
-		if err = ensureRemoteDirectory(ctx, backend, path.Join(base, "files", path.Dir(f.Path))); err != nil {
+		if err = ensureRemoteDirectoryStrict(ctx, backend, path.Join(base, "files", path.Dir(f.Path))); err != nil {
 			f.State, f.Error = "failed", safeBackupFailure(err)
 			snapshot.FilesFailed++
 			_ = s.updateBackupItem(snapshot.ID, *f)
@@ -621,7 +635,7 @@ func (s *Service) RunBackup(ctx context.Context, id, token string) (BackupSnapsh
 			continue
 		}
 		remoteKey := path.Join(base, "files", f.Path)
-		entry, putErr := backend.put(ctx, remoteKey, reader, f.Size, storage.Condition{IfNoneMatch: true}, f.SHA256)
+		entry, putErr := backend.putStrict(ctx, remoteKey, reader, f.Size, storage.Condition{IfNoneMatch: true}, f.SHA256)
 		closeErr := reader.Close()
 		if putErr == nil {
 			putErr = closeErr
@@ -703,6 +717,14 @@ func (s *Service) RunBackup(ctx context.Context, id, token string) (BackupSnapsh
 func backupSnapshotBase(prefix, id string) string { return path.Join(prefix, ".tamiops-backup", id) }
 
 func ensureRemoteDirectory(ctx context.Context, b Backend, key string) error {
+	return ensureRemoteDirectoryWithPolicy(ctx, b, key, false)
+}
+
+func ensureRemoteDirectoryStrict(ctx context.Context, b Backend, key string) error {
+	return ensureRemoteDirectoryWithPolicy(ctx, b, key, true)
+}
+
+func ensureRemoteDirectoryWithPolicy(ctx context.Context, b Backend, key string, strict bool) error {
 	ctx = withManagedBackup(ctx)
 	if key == "." || key == "" {
 		return nil
@@ -724,7 +746,12 @@ func ensureRemoteDirectory(ctx context.Context, b Backend, key string) error {
 		if !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
-		if err = b.Mkdir(ctx, current); err != nil && !errors.Is(err, storage.ErrConflict) {
+		if strict {
+			err = b.mkdirStrict(ctx, current)
+		} else {
+			err = b.Mkdir(ctx, current)
+		}
+		if err != nil && !errors.Is(err, storage.ErrConflict) {
 			return err
 		}
 	}
@@ -752,7 +779,7 @@ func saveBackupManifest(ctx context.Context, b Backend, key string, m backupMani
 	if etag != "" {
 		condition = storage.Condition{IfMatch: etag}
 	}
-	e, err := b.Put(ctx, key, strings.NewReader(string(data)), int64(len(data)), condition)
+	e, err := b.putStrict(ctx, key, strings.NewReader(string(data)), int64(len(data)), condition, "")
 	if err != nil {
 		return "", err
 	}
@@ -1223,7 +1250,7 @@ func (s *Service) RunDueBackups(ctx context.Context) ([]BackupSnapshot, error) {
 			continue
 		}
 		connection, connectionErr := s.connection(j.ConnectionID)
-		if connectionErr != nil || !connection.Capabilities.ConditionalWrite {
+		if connectionErr != nil || !canWriteStrict(connection) {
 			detail := "备份连接不可用或未验证条件写入"
 			s.recordBackupAttemptFailure(j, detail)
 			continue

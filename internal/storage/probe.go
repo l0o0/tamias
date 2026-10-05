@@ -15,8 +15,9 @@ import (
 const multipartProbePartSize = 5 << 20
 
 // Probe verifies the conditional operations needed for safe editing. It uses
-// one cryptographically random, isolated key and removes it only with a known
-// ETag so a failed capability check cannot delete an unrelated object.
+// one cryptographically random, isolated key. Cleanup requires its nonce-bearing
+// content and a known ETag; on a server that ignores conditions this remains
+// best-effort cleanup of our private probe, never proof of safe write support.
 func Probe(ctx context.Context, store Store) (caps Capabilities, resultErr error) {
 	if store == nil {
 		return Capabilities{}, fmt.Errorf("storage is nil")
@@ -25,43 +26,62 @@ func Probe(ctx context.Context, store Store) (caps Capabilities, resultErr error
 	if _, err := rand.Read(token[:]); err != nil {
 		return Capabilities{}, fmt.Errorf("create storage probe key: %w", err)
 	}
-	key := ".tamiops-probe-" + hex.EncodeToString(token[:])
+	probeID := hex.EncodeToString(token[:])
+	key := ".tamiops-probe-" + probeID
 	created := false
 	currentETag := ""
+	var currentContent []byte
 	defer func() {
 		if !created {
 			return
 		}
 		if currentETag == "" {
-			resultErr = errors.Join(resultErr, fmt.Errorf("temporary probe cleanup failed for key %q: no ETag is available for a safe delete", key))
+			resultErr = errors.Join(resultErr, fmt.Errorf("临时验证文件 %q 无法确认版本，已保留以避免误删", key))
 			caps = Capabilities{}
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		// A failed condition check may have changed the object, even without
+		// advancing its ETag. Never clean up content we cannot still identify.
+		if err := verifyProbeContent(cleanupCtx, store, key, currentETag, currentContent); err != nil {
+			if !errors.Is(err, ErrNotFound) {
+				resultErr = errors.Join(resultErr, fmt.Errorf("临时验证文件 %q 的内容或版本已变化，已保留以避免误删", key))
+				caps = Capabilities{}
+			}
+			return
+		}
 		// Cleanup stays conditional because the temporary key may have changed.
 		if err := store.Delete(cleanupCtx, key, Condition{IfMatch: currentETag}); err != nil && !errors.Is(err, ErrNotFound) {
-			resultErr = errors.Join(resultErr, fmt.Errorf("temporary probe cleanup failed for key %q", key))
+			resultErr = errors.Join(resultErr, fmt.Errorf("临时验证文件 %q 清理失败：%w", key, err))
 			caps = Capabilities{}
 		}
 	}()
 
-	initialBytes := []byte("storage-probe-v1")
+	// A per-probe payload lets a read-back distinguish our write from an
+	// unrelated revision when PUT does not include a response validator.
+	initialBytes := []byte("storage-probe-v1:" + probeID)
 	initial, err := store.Put(ctx, key, bytes.NewReader(initialBytes), int64(len(initialBytes)), Condition{IfNoneMatch: true})
 	if err != nil {
 		return Capabilities{}, fmt.Errorf("conditional create probe failed: %w", err)
 	}
 	created = true
-	currentETag = initial.ETag
-	if !isStrongProbeETag(currentETag) {
-		return Capabilities{}, fmt.Errorf("conditional create probe returned no strong ETag for key %q", key)
+	currentETag, err = probeWriteETag(ctx, store, key, initial.ETag, initialBytes)
+	if err != nil {
+		return Capabilities{}, fmt.Errorf("conditional create probe could not confirm the version for key %q: %w", key, err)
+	}
+	initialETag := currentETag
+	currentContent = initialBytes
+
+	// A server that ignores a condition can accept the negative test write.
+	// Recover only our unique payload for cleanup, never an arbitrary Stat tag.
+	recoverProbeWrite := func(entry Entry, payload []byte) {
+		currentETag, _ = probeWriteETag(ctx, store, key, entry.ETag, payload)
+		currentContent = payload
 	}
 
 	verifyUnchanged := func(expected []byte) error {
 		if err := verifyProbeContent(ctx, store, key, currentETag, expected); err != nil {
-			if latest, statErr := store.Stat(ctx, key); statErr == nil && latest.ETag != "" {
-				currentETag = latest.ETag
-			}
 			return err
 		}
 		latest, err := store.Stat(ctx, key)
@@ -69,60 +89,66 @@ func Probe(ctx context.Context, store Store) (caps Capabilities, resultErr error
 			return fmt.Errorf("stat after conditional probe failed")
 		}
 		if latest.ETag != currentETag {
-			currentETag = latest.ETag
+			// Preserve the verified version for conditional cleanup. A newer
+			// revision may belong to another writer and must not be adopted.
 			return fmt.Errorf("conditional rejection changed the object ETag")
 		}
 		return nil
 	}
 
-	_, createErr := store.Put(ctx, key, bytes.NewReader([]byte("duplicate")), int64(len("duplicate")), Condition{IfNoneMatch: true})
-	contentErr := verifyUnchanged(initialBytes)
-	if contentErr != nil {
-		return Capabilities{}, fmt.Errorf("conditional create did not preserve probe contents: %w", contentErr)
+	duplicateBytes := []byte("storage-probe-duplicate:" + probeID)
+	duplicate, createErr := store.Put(ctx, key, bytes.NewReader(duplicateBytes), int64(len(duplicateBytes)), Condition{IfNoneMatch: true})
+	if createErr == nil {
+		recoverProbeWrite(duplicate, duplicateBytes)
+		return Capabilities{}, fmt.Errorf("%w：服务器忽略了“仅新建、不覆盖”条件，安全写入与删除未启用", ErrConditionalUnsupported)
 	}
 	if !errors.Is(createErr, ErrConflict) {
-		if createErr == nil {
-			return Capabilities{}, fmt.Errorf("conditional create probe was not rejected")
-		}
-		return Capabilities{}, fmt.Errorf("conditional create probe returned an unexpected error")
+		return Capabilities{}, fmt.Errorf("验证“仅新建”条件失败：%w", createErr)
+	}
+	contentErr := verifyUnchanged(initialBytes)
+	if contentErr != nil {
+		return Capabilities{}, fmt.Errorf("验证“仅新建”条件后，临时文件的内容或版本发生变化：%w", contentErr)
 	}
 
 	wrongETag := "\"probe-invalid-" + hex.EncodeToString(token[:]) + "\""
-	_, overwriteErr := store.Put(ctx, key, bytes.NewReader([]byte("wrong-etag")), int64(len("wrong-etag")), Condition{IfMatch: wrongETag})
-	contentErr = verifyUnchanged(initialBytes)
-	if contentErr != nil {
-		return Capabilities{}, fmt.Errorf("wrong ETag write did not preserve probe contents: %w", contentErr)
+	wrongVersionBytes := []byte("storage-probe-wrong-version:" + probeID)
+	overwrite, overwriteErr := store.Put(ctx, key, bytes.NewReader(wrongVersionBytes), int64(len(wrongVersionBytes)), Condition{IfMatch: wrongETag})
+	if overwriteErr == nil {
+		recoverProbeWrite(overwrite, wrongVersionBytes)
+		return Capabilities{}, fmt.Errorf("%w：服务器接受了版本不匹配的覆盖请求，安全写入与删除未启用", ErrConditionalUnsupported)
 	}
 	if !errors.Is(overwriteErr, ErrConflict) {
-		if overwriteErr == nil {
-			return Capabilities{}, fmt.Errorf("wrong ETag conditional write was not rejected")
-		}
-		return Capabilities{}, fmt.Errorf("wrong ETag conditional write returned an unexpected error")
+		return Capabilities{}, fmt.Errorf("验证覆盖保护失败：%w", overwriteErr)
+	}
+	contentErr = verifyUnchanged(initialBytes)
+	if contentErr != nil {
+		return Capabilities{}, fmt.Errorf("验证覆盖保护后，临时文件的内容或版本发生变化：%w", contentErr)
 	}
 
-	updatedBytes := []byte("storage-probe-v2")
+	updatedBytes := []byte("storage-probe-v2:" + probeID)
 	updated, err := store.Put(ctx, key, bytes.NewReader(updatedBytes), int64(len(updatedBytes)), Condition{IfMatch: currentETag})
 	if err != nil {
 		return Capabilities{}, fmt.Errorf("correct ETag conditional write failed: %w", err)
 	}
-	currentETag = updated.ETag
-	if !isStrongProbeETag(currentETag) {
-		return Capabilities{}, fmt.Errorf("conditional write probe returned no strong ETag for key %q", key)
+	currentETag, err = probeWriteETag(ctx, store, key, updated.ETag, updatedBytes)
+	if err != nil {
+		return Capabilities{}, fmt.Errorf("conditional write probe could not confirm the version for key %q: %w", key, err)
 	}
-	if currentETag == initial.ETag {
+	currentContent = updatedBytes
+	if currentETag == initialETag {
 		return Capabilities{}, fmt.Errorf("conditional write probe did not produce a new ETag for key %q", key)
 	}
 
 	deleteErr := store.Delete(ctx, key, Condition{IfMatch: wrongETag})
-	contentErr = verifyUnchanged(updatedBytes)
-	if contentErr != nil {
-		return Capabilities{}, fmt.Errorf("wrong ETag delete did not preserve probe contents: %w", contentErr)
+	if deleteErr == nil {
+		return Capabilities{}, fmt.Errorf("%w：服务器接受了版本不匹配的删除请求，安全写入与删除未启用", ErrConditionalUnsupported)
 	}
 	if !errors.Is(deleteErr, ErrConflict) {
-		if deleteErr == nil {
-			return Capabilities{}, fmt.Errorf("wrong ETag conditional delete was not rejected")
-		}
-		return Capabilities{}, fmt.Errorf("wrong ETag conditional delete returned an unexpected error")
+		return Capabilities{}, fmt.Errorf("验证删除保护失败：%w", deleteErr)
+	}
+	contentErr = verifyUnchanged(updatedBytes)
+	if contentErr != nil {
+		return Capabilities{}, fmt.Errorf("验证删除保护后，临时文件的内容或版本发生变化：%w", contentErr)
 	}
 
 	caps = Capabilities{
@@ -135,12 +161,15 @@ func Probe(ctx context.Context, store Store) (caps Capabilities, resultErr error
 		// only enables resumable large uploads when the final multipart commit
 		// enforces both overwrite and create-only conditions.
 		var latestETag string
-		latestETag, caps.MultipartConditional, resultErr = probeMultipartConditional(ctx, store, multipart, key, token)
+		latestETag, caps.MultipartConditional, resultErr = probeMultipartConditional(ctx, store, multipart, key, currentETag, token, updatedBytes)
 		if latestETag != "" {
+			if latestETag != currentETag {
+				currentContent = multipartProbePayload(token)
+			}
 			currentETag = latestETag
 		}
 		if resultErr != nil {
-			return caps, resultErr
+			return Capabilities{}, resultErr
 		}
 	}
 	if err := store.Delete(ctx, key, Condition{IfMatch: currentETag}); err != nil {
@@ -148,6 +177,33 @@ func Probe(ctx context.Context, store Store) (caps Capabilities, resultErr error
 	}
 	created = false
 	return caps, nil
+}
+
+// probeWriteETag verifies the version written to an isolated probe object,
+// resolving an omitted/weak PUT validator through Stat when needed. Bind a read
+// to that strong ETag and verify the nonce-bearing content before using it.
+// On failure, return no ETag so the caller cannot delete an unverified revision.
+func probeWriteETag(ctx context.Context, store Store, key, responseETag string, expected []byte) (string, error) {
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	etag := responseETag
+	if !isStrongProbeETag(etag) {
+		entry, err := store.Stat(readCtx, key)
+		if err != nil {
+			return "", fmt.Errorf("read probe properties after PUT: %w", err)
+		}
+		if !isStrongProbeETag(entry.ETag) {
+			return "", fmt.Errorf("probe properties returned no strong ETag")
+		}
+		if entry.IsDir || entry.Size != int64(len(expected)) {
+			return "", fmt.Errorf("probe properties do not match the uploaded file")
+		}
+		etag = entry.ETag
+	}
+	if err := verifyProbeContent(readCtx, store, key, etag, expected); err != nil {
+		return "", fmt.Errorf("verify probe content after PUT: %w", err)
+	}
+	return etag, nil
 }
 
 func probeRangeRead(ctx context.Context, store Store, key, etag string, expected []byte) bool {
@@ -169,29 +225,32 @@ func isStrongProbeETag(etag string) bool {
 	return etag != "" && !strings.HasPrefix(strings.ToUpper(etag), "W/")
 }
 
-func probeMultipartConditional(ctx context.Context, store Store, multipart MultipartStore, key string, nonce [16]byte) (currentETag string, supported bool, resultErr error) {
+func multipartProbePayload(nonce [16]byte) []byte {
 	payload := bytes.Repeat([]byte("m"), multipartProbePartSize)
-	oldContent := []byte("storage-probe-v2")
-	current, err := store.Stat(ctx, key)
-	if err != nil || current.ETag == "" {
-		return "", false, nil
-	}
-	currentETag = current.ETag
+	copy(payload, "storage-multipart-probe:"+hex.EncodeToString(nonce[:]))
+	return payload
+}
+
+func probeMultipartConditional(ctx context.Context, store Store, multipart MultipartStore, key, knownETag string, nonce [16]byte, oldContent []byte) (currentETag string, supported bool, resultErr error) {
+	payload := multipartProbePayload(nonce)
+	currentETag = knownETag
 	verify := func(expected []byte) bool {
 		if err := verifyProbeContent(ctx, store, key, currentETag, expected); err != nil {
-			if latest, statErr := store.Stat(ctx, key); statErr == nil && latest.ETag != "" {
-				currentETag = latest.ETag
-			}
 			return false
 		}
 		latest, err := store.Stat(ctx, key)
-		if err != nil || latest.ETag != currentETag {
-			if err == nil && latest.ETag != "" {
-				currentETag = latest.ETag
-			}
-			return false
+		return err == nil && latest.ETag == currentETag
+	}
+	if !verify(oldContent) {
+		return currentETag, false, nil
+	}
+	// An unsupported/ambiguous completion may have written our payload. Only
+	// adopt that revision for cleanup after verifying it; never adopt a
+	// foreign revision merely because Stat returned a newer tag.
+	recoverWrittenProbe := func() {
+		if etag, err := probeWriteETag(ctx, store, key, "", payload); err == nil {
+			currentETag = etag
 		}
-		return true
 	}
 
 	newKey := key + "-multipart-create"
@@ -210,6 +269,12 @@ func probeMultipartConditional(ctx context.Context, store Store, multipart Multi
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if err := verifyProbeContent(cleanupCtx, store, newKey, newKeyETag, payload); err != nil {
+			if !errors.Is(err, ErrNotFound) {
+				resultErr = errors.Join(resultErr, fmt.Errorf("分片验证文件 %q 的内容或版本已变化，已保留以避免误删", newKey))
+			}
+			return
+		}
 		if err := store.Delete(cleanupCtx, newKey, Condition{IfMatch: newKeyETag}); err != nil && !errors.Is(err, ErrNotFound) {
 			resultErr = errors.Join(resultErr, fmt.Errorf("multipart probe cleanup failed for key %q", newKey))
 		}
@@ -249,43 +314,25 @@ func probeMultipartConditional(ctx context.Context, store Store, multipart Multi
 	wrongTag := `"probe-invalid-` + hex.EncodeToString(nonce[:]) + `"`
 	_, wrongMatchErr := multipart.CompleteMultipart(ctx, key, wrongUploadID, wrongParts, Condition{IfMatch: wrongTag})
 	if !errors.Is(wrongMatchErr, ErrConflict) || !verify(oldContent) {
-		if wrongMatchErr == nil {
-			if latest, statErr := store.Stat(ctx, key); statErr == nil && latest.ETag != "" {
-				currentETag = latest.ETag
-			}
-		}
+		recoverWrittenProbe()
 		return currentETag, false, nil
 	}
 	_, createOnlyErr := multipart.CompleteMultipart(ctx, key, wrongUploadID, wrongParts, Condition{IfNoneMatch: true})
 	if !errors.Is(createOnlyErr, ErrConflict) || !verify(oldContent) {
-		if createOnlyErr == nil {
-			if latest, statErr := store.Stat(ctx, key); statErr == nil && latest.ETag != "" {
-				currentETag = latest.ETag
-			}
-		}
+		recoverWrittenProbe()
 		return currentETag, false, nil
 	}
 	previousETag := currentETag
 	completed, err := multipart.CompleteMultipart(ctx, key, wrongUploadID, wrongParts, Condition{IfMatch: currentETag})
 	if err != nil {
-		if latest, statErr := store.Stat(ctx, key); statErr == nil && latest.ETag != "" {
-			currentETag = latest.ETag
-		}
+		recoverWrittenProbe()
 		return currentETag, false, nil
 	}
-	if completed.ETag != "" {
-		currentETag = completed.ETag
-	}
-	if !isStrongProbeETag(currentETag) {
-		latest, statErr := store.Stat(ctx, key)
-		if statErr != nil || !isStrongProbeETag(latest.ETag) {
-			return currentETag, false, nil
-		}
-		currentETag = latest.ETag
-	}
-	if verifyProbeContent(ctx, store, key, currentETag, payload) != nil {
+	verifiedETag, err := probeWriteETag(ctx, store, key, completed.ETag, payload)
+	if err != nil {
 		return currentETag, false, nil
 	}
+	currentETag = verifiedETag
 	if currentETag == previousETag {
 		return currentETag, false, nil
 	}
@@ -302,24 +349,20 @@ func probeMultipartConditional(ctx context.Context, store Store, multipart Multi
 	defer abortNew()
 	newEntry, err := multipart.CompleteMultipart(ctx, newKey, newUploadID, newParts, Condition{IfNoneMatch: true})
 	if err != nil {
+		// A completion response can be lost after the object was committed.
+		// Clean up only if the object still contains this probe's payload.
+		verifiedETag, verifyErr := probeWriteETag(ctx, store, newKey, "", payload)
+		if verifyErr == nil {
+			newKeyCreated = true
+			newKeyETag = verifiedETag
+		} else if _, statErr := store.Stat(ctx, newKey); !errors.Is(statErr, ErrNotFound) {
+			return currentETag, false, fmt.Errorf("multipart create probe could not confirm cleanup for key %q: %w", newKey, errors.Join(err, verifyErr))
+		}
 		return currentETag, false, nil
-	}
-	if newEntry.ETag != "" {
-		newKeyETag = newEntry.ETag
 	}
 	newKeyCreated = true
-	if newKeyETag == "" {
-		latest, statErr := store.Stat(ctx, newKey)
-		if statErr != nil || latest.ETag == "" {
-			return currentETag, false, nil
-		}
-		newKeyETag = latest.ETag
-	}
-	newStat, err := store.Stat(ctx, newKey)
-	if err != nil || newStat.Size != int64(len(payload)) || newStat.ETag != newKeyETag {
-		return currentETag, false, nil
-	}
-	if verifyProbeContent(ctx, store, newKey, newKeyETag, payload) != nil {
+	newKeyETag, err = probeWriteETag(ctx, store, newKey, newEntry.ETag, payload)
+	if err != nil {
 		return currentETag, false, nil
 	}
 	return currentETag, true, nil
@@ -330,15 +373,21 @@ func verifyProbeContent(ctx context.Context, store Store, key, etag string, expe
 	defer cancel()
 	body, entry, err := store.Open(readCtx, key, etag)
 	if err != nil {
-		return fmt.Errorf("open conditional probe object failed")
+		return fmt.Errorf("open conditional probe object failed: %w", err)
+	}
+	if body == nil {
+		return fmt.Errorf("conditional probe read returned no body")
 	}
 	read, readErr := io.ReadAll(io.LimitReader(body, int64(len(expected)+1)))
 	closeErr := body.Close()
 	if readErr != nil || closeErr != nil {
 		return fmt.Errorf("read conditional probe object failed")
 	}
-	if entry.ETag != "" && entry.ETag != etag {
+	if entry.ETag != etag {
 		return fmt.Errorf("conditional probe read returned a different ETag")
+	}
+	if entry.IsDir || entry.Size >= 0 && entry.Size != int64(len(expected)) {
+		return fmt.Errorf("conditional probe content metadata mismatch")
 	}
 	if len(read) != len(expected) {
 		return fmt.Errorf("conditional probe content length mismatch")

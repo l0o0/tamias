@@ -70,10 +70,10 @@ func (s *Service) extendedCommand(r *http.Request) (any, error, bool) {
 		if err != nil {
 			return nil, err, true
 		}
-		result, err := s.saveGeneratedJSON("tamiops-config.json", value)
+		result, err := s.saveGeneratedJSON("tamias-config.json", value)
 		return result, err, true
 	case "/api/diagnostics/save":
-		result, err := s.saveGeneratedJSON("tamiops-diagnostics.json", s.Diagnostics())
+		result, err := s.saveGeneratedJSON("tamias-diagnostics.json", s.Diagnostics())
 		return result, err, true
 	}
 	switch r.URL.Path {

@@ -1,0 +1,223 @@
+{
+  "endpoint": "https://data.cstcloud.cn/dav",
+  "testedAt": "2026-10-04T03:43:19Z",
+  "lockFollowupAt": "2026-10-04T03:45:32Z",
+  "scope": "Random nonce-bearing temporary files only; no credentials or user file contents in this report. All owned paths verified absent after testing.",
+  "protocolResults": [
+    {
+      "test": "OPTIONS",
+      "status": 200,
+      "result": "observed",
+      "details": {
+        "allow": "OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK",
+        "dav": "1, 2"
+      }
+    },
+    {
+      "test": "read root properties",
+      "status": 207,
+      "result": "pass"
+    },
+    {
+      "test": "ordinary create and read",
+      "status": 200,
+      "result": "pass",
+      "details": {
+        "bytes": 59,
+        "strongETag": true
+      }
+    },
+    {
+      "test": "PROPFIND versus GET ETag",
+      "status": 207,
+      "result": "pass",
+      "details": {
+        "sameETag": true
+      }
+    },
+    {
+      "test": "PUT If-None-Match:* existing file",
+      "status": 201,
+      "result": "not_enforced",
+      "details": {
+        "originalPreserved": false,
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "PUT If-Match wrong ETag",
+      "status": 201,
+      "result": "not_enforced",
+      "details": {
+        "originalPreserved": false,
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "PUT If-Match current ETag",
+      "status": 201,
+      "result": "pass",
+      "details": {
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "GET If-Match wrong ETag",
+      "status": 200,
+      "result": "not_enforced",
+      "details": {
+        "returnedCurrentContent": true
+      }
+    },
+    {
+      "test": "Range GET",
+      "status": 200,
+      "result": "full_response_range_unsupported",
+      "details": {
+        "bytes": 65,
+        "contentRange": "",
+        "sameETag": true
+      }
+    },
+    {
+      "test": "PUT WebDAV If wrong ETag",
+      "status": 201,
+      "result": "not_enforced",
+      "details": {
+        "originalPreserved": false,
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "PUT WebDAV If current ETag",
+      "status": 201,
+      "result": "pass",
+      "details": {
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "DELETE If-Match wrong ETag",
+      "status": 204,
+      "result": "not_enforced",
+      "details": {
+        "fileSurvived": false,
+        "readbackStatus": 404
+      }
+    },
+    {
+      "test": "DELETE WebDAV If wrong ETag",
+      "status": 204,
+      "result": "not_enforced",
+      "details": {
+        "fileSurvived": false,
+        "readbackStatus": 404
+      }
+    },
+    {
+      "test": "MOVE Overwrite:F existing destination",
+      "status": 500,
+      "result": "rejected_nonstandard_status",
+      "details": {
+        "destinationPreserved": true,
+        "sourcePreserved": true
+      }
+    },
+    {
+      "test": "MOVE Overwrite:F absent destination",
+      "status": 201,
+      "result": "pass",
+      "details": {
+        "destinationMatches": true,
+        "sourceGone": true
+      }
+    },
+    {
+      "test": "LOCK own temporary file",
+      "status": 200,
+      "result": "pass",
+      "details": {
+        "hasLockToken": true
+      }
+    },
+    {
+      "test": "UNLOCK test lock",
+      "status": 204,
+      "result": "pass"
+    },
+    {
+      "test": "cleanup all temporary files",
+      "status": 0,
+      "result": "pass",
+      "details": {
+        "alreadyAbsent": 3,
+        "createdKeys": 7,
+        "deleted": 4,
+        "remaining": []
+      }
+    }
+  ],
+  "lockEnforcementResults": [
+    {
+      "test": "acquire exclusive lock",
+      "status": 200,
+      "result": "pass",
+      "details": {
+        "hasLockToken": true
+      }
+    },
+    {
+      "test": "PUT locked file without token",
+      "status": 201,
+      "result": "not_enforced",
+      "details": {
+        "originalPreserved": false,
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "PUT locked file with wrong token",
+      "status": 201,
+      "result": "not_enforced",
+      "details": {
+        "originalPreserved": false,
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "PUT locked file with correct token",
+      "status": 201,
+      "result": "pass",
+      "details": {
+        "originalPreserved": false,
+        "replacementWritten": true
+      }
+    },
+    {
+      "test": "DELETE locked file without token",
+      "status": 204,
+      "result": "not_enforced",
+      "details": {
+        "fileSurvived": false,
+        "initialBytes": 67,
+        "readbackStatus": 404
+      }
+    },
+    {
+      "test": "UNLOCK test lock",
+      "status": 204,
+      "result": "pass"
+    },
+    {
+      "test": "cleanup all temporary files",
+      "status": 0,
+      "result": "pass",
+      "details": {
+        "alreadyAbsent": 1,
+        "createdKeys": 1,
+        "deleted": 0,
+        "remaining": []
+      }
+    }
+  ]
+}

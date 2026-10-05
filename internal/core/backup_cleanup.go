@@ -185,7 +185,7 @@ func (s *Service) buildBackupCleanupPlan(ctx context.Context, snapshotID string)
 	if err != nil {
 		return backupCleanupPlan{}, err
 	}
-	if !conn.Capabilities.ConditionalDelete {
+	if !canDelete(conn) {
 		return backupCleanupPlan{}, errors.New("远端未验证条件删除能力，已保留快照对象")
 	}
 	files, err := s.loadBackupFiles(snapshotID)

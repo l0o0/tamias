@@ -468,6 +468,7 @@ func (s *webDAVStore) Open(ctx context.Context, key, etag string) (io.ReadCloser
 		return nil, Entry{}, err
 	}
 	headers := make(http.Header)
+	headers.Set("Accept-Encoding", "identity")
 	if etag != "" {
 		headers.Set("If-Match", etag)
 	}
@@ -505,6 +506,7 @@ func (s *webDAVStore) OpenRange(ctx context.Context, key, etag string, start, le
 	}
 	end := start + length - 1
 	headers := make(http.Header)
+	headers.Set("Accept-Encoding", "identity")
 	headers.Set("If-Match", etag)
 	headers.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 	resp, err := s.request(ctx, http.MethodGet, key, false, nil, headers)

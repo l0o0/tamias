@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="tm-logo" viewBox="0 0 160 160" fill="none">
+  <title>tamiops · 抱坚果的摆尾小花鼠</title>
+  <style>
+    .tm-logo-tail { transform-origin: 78px 135px; }
+    .tm-logo:hover .tm-logo-tail,
+    .brand-lockup:hover .tm-logo-tail,
+    .brand-lockup:focus-within .tm-logo-tail,
+    .about-logo:hover .tm-logo-tail,
+    .about-logo:focus-within .tm-logo-tail {
+      animation: tm-tail-greeting 1050ms ease-in-out both;
+    }
+    @keyframes tm-tail-greeting {
+      0%, 100% { transform: rotate(0deg); }
+      20% { transform: rotate(-7deg); }
+      43% { transform: rotate(5deg); }
+      64% { transform: rotate(-3.5deg); }
+      82% { transform: rotate(1.5deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tm-logo .tm-logo-tail { animation: none !important; }
+    }
+  </style>
+  <g fill="#252629">
+    <!-- The tail has its own silhouette; the channels are genuinely transparent. -->
+    <g class="tm-logo-tail">
+      <path d="M28 36C47 10 76 14 89 38C103 65 91 83 68 101C71 86 82 77 82 60C83 32 53 13 28 36Z"/>
+      <path d="M26 64C14 59 16 43 27 35C44 22 66 32 72 51C81 75 64 91 59 109C54 127 66 140 83 144C63 150 42 140 33 125C21 105 32 91 40 76C51 54 30 46 26 64Z"/>
+    </g>
+    <!-- A separate back ribbon echoes the two carved channels in the app icon. -->
+    <path d="M67 120C65 103 73 91 88 87C102 83 110 78 112 63C117 79 108 89 94 93C79 97 71 107 67 120Z"/>
+    <path fill-rule="evenodd" d="M76 141C62 126 71 107 87 101C99 96 113 97 117 84C121 70 110 67 110 59C110 54 111 51 113 51C118 51 123 55 125 62C139 65 140 74 146 78C153 82 146 88 136 91C126 94 125 98 125 105C125 113 121 119 117 123C115 117 109 112 99 112C116 118 120 132 110 141C120 140 129 144 128 148H102C90 149 82 148 76 141ZM134 74C130 70 127 73 129 77C132 81 137 79 134 74Z"/>
+    <path d="M65 138C76 144 92 144 107 142L113 148C94 150 74 152 61 146Z"/>
+    <g class="tm-logo-hands">
+      <!-- Enlarged original acorn, with transparent shell seam and highlight. -->
+      <g transform="translate(0 7)">
+      <g transform="translate(135 100) scale(1.25) rotate(15) translate(-135 -100)">
+        <path fill-rule="evenodd" d="M127 101C126 106 130 112 135 114C141 112 145 106 143 101ZM130 103C129 107 131 110 134 112L136 110C133 108 132 106 133 103Z" fill="#B8A4DE"/>
+        <path d="M126 95C126 88 142 87 145 95C141 99 130 99 126 95Z" fill="#796596"/>
+        <path d="M135 91L136 89" stroke="#796596" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <path d="M116 95C121 92 124 96 128 100C131 102 135 101 136 104C136 108 129 109 125 106L116 102Z"/>
+      <path d="M148 98C153 99 151 106 146 109L141 109C138 107 141 104 144 103Z"/>
+      </g>
+    </g>
+  </g>
+</svg>

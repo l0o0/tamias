@@ -188,6 +188,7 @@ func TestSyncRemoteUpdateReplacesSafelyAndKeepsRecovery(t *testing.T) {
 	s, id := testService(t)
 	dir := t.TempDir()
 	j := makeBaseline(t, s, id, dir, "both", "note.txt")
+	setSyncKeepRecovery(t, s, id, true)
 	b := Backend{s, id}
 	old, err := b.Stat(context.Background(), "note.txt")
 	if err != nil {
@@ -347,6 +348,7 @@ func TestSyncConflictResolutions(t *testing.T) {
 func TestSyncDeletionRulesAndMirrorConfirmation(t *testing.T) {
 	t.Run("both-way-baseline-delete", func(t *testing.T) {
 		s, id := testService(t)
+		setSyncKeepRecovery(t, s, id, true)
 		dir := t.TempDir()
 		j := makeBaseline(t, s, id, dir, "both", "gone.txt")
 		b := Backend{s, id}
@@ -498,6 +500,7 @@ func TestSyncDeletionRulesAndMirrorConfirmation(t *testing.T) {
 	})
 	t.Run("mirror-download-removes-local-extras", func(t *testing.T) {
 		s, id := testService(t)
+		setSyncKeepRecovery(t, s, id, true)
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "extra.txt"), []byte("extra"), 0600); err != nil {
 			t.Fatal(err)

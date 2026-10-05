@@ -67,7 +67,7 @@ func (b Backend) AcquireDAVLock(ctx context.Context, key, owner string, depth bo
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if !c.Capabilities.ConditionalWrite {
+	if !canWriteStrict(c) {
 		return "", time.Time{}, errors.New("请先验证写入能力")
 	}
 	st, err := s.store(b.ConnectionID)

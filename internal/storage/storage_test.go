@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,46 @@ import (
 	"sync"
 	"testing"
 )
+
+func TestNormalizeWriteModeUsesStandardDefaultAndKeepsLegacyModes(t *testing.T) {
+	mode, err := NormalizeWriteMode("")
+	if err != nil || mode != WriteModeStandard {
+		t.Fatalf("empty mode normalized to %q, err=%v; want %q", mode, err, WriteModeStandard)
+	}
+	for _, legacy := range []string{WriteModeStrict, WriteModeCopy, WriteModeCompatible} {
+		got, err := NormalizeWriteMode(legacy)
+		if err != nil || got != legacy {
+			t.Fatalf("explicit mode %q changed to %q, err=%v", legacy, got, err)
+		}
+	}
+	if got, err := NormalizeWriteMode("unknown"); err == nil || got != "" {
+		t.Fatalf("unknown mode was accepted as %q", got)
+	}
+}
+
+func TestConfigRecoveryFlagDefaultsOffAndRoundTripsWhenEnabled(t *testing.T) {
+	cfg := Config{Kind: "webdav", Endpoint: "https://example.test/dav"}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Config
+	if err = json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	mode, err := NormalizeWriteMode(decoded.WriteMode)
+	if err != nil || mode != WriteModeStandard || decoded.KeepRecovery {
+		t.Fatalf("zero-value config did not use normal-sync defaults: mode=%q keepRecovery=%v err=%v", mode, decoded.KeepRecovery, err)
+	}
+	cfg.KeepRecovery = true
+	encoded, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(encoded, &decoded); err != nil || !decoded.KeepRecovery {
+		t.Fatalf("enabled recovery flag did not persist: keepRecovery=%v err=%v", decoded.KeepRecovery, err)
+	}
+}
 
 func TestWebDAVListScopesAndDecodesDirectChildren(t *testing.T) {
 	const document = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
@@ -632,8 +673,17 @@ func TestProbeRejectsSameETagWithChangedContent(t *testing.T) {
 			if listErr != nil {
 				t.Fatal(listErr)
 			}
-			if len(entries) != 0 {
-				t.Fatalf("probe object cleanup failed after content mismatch: %#v", entries)
+			if len(entries) != 1 {
+				t.Fatalf("modified content must survive probe cleanup: %#v", entries)
+			}
+			body, _, openErr := base.Open(context.Background(), entries[0].Path, "")
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			content, readErr := io.ReadAll(body)
+			_ = body.Close()
+			if readErr != nil || string(content) != "tampered bytes" {
+				t.Fatalf("cleanup changed unknown content: %q, %v", content, readErr)
 			}
 		})
 	}
@@ -681,7 +731,7 @@ func TestProbeReportsCleanupFailureWithoutUnconditionalDelete(t *testing.T) {
 	base := NewMemory()
 	store := cleanupFailStore{Store: base}
 	_, err := Probe(context.Background(), store)
-	if err == nil || !strings.Contains(err.Error(), "temporary probe cleanup failed") {
+	if err == nil || !strings.Contains(err.Error(), "清理失败") {
 		t.Fatalf("Probe error = %v, want cleanup failure", err)
 	}
 	entries, err := base.List(context.Background(), "")
@@ -694,36 +744,6 @@ func TestProbeReportsCleanupFailureWithoutUnconditionalDelete(t *testing.T) {
 	if !strings.HasPrefix(entries[0].Name, ".tamiops-probe-") {
 		t.Fatalf("unexpected cleanup fixture name: %#v", entries[0])
 	}
-}
-
-func TestProbeMissingETagReportsTemporaryKeyWithoutStatFallback(t *testing.T) {
-	base := NewMemory()
-	store := &hideFirstPutETagStore{Store: base}
-	_, err := Probe(context.Background(), store)
-	if err == nil || !strings.Contains(err.Error(), ".tamiops-probe-") || !strings.Contains(err.Error(), "no ETag") {
-		t.Fatalf("Probe error = %v, want missing ETag and temporary key", err)
-	}
-	if store.statCalls != 0 {
-		t.Fatalf("Probe used Stat %d times to replace a missing Put ETag", store.statCalls)
-	}
-}
-
-type hideFirstPutETagStore struct {
-	Store
-	statCalls int
-}
-
-func (s *hideFirstPutETagStore) Put(ctx context.Context, key string, body io.ReadSeeker, size int64, condition Condition) (Entry, error) {
-	e, err := s.Store.Put(ctx, key, body, size, condition)
-	if err == nil {
-		e.ETag = ""
-	}
-	return e, err
-}
-
-func (s *hideFirstPutETagStore) Stat(ctx context.Context, key string) (Entry, error) {
-	s.statCalls++
-	return s.Store.Stat(ctx, key)
 }
 
 type cleanupFailStore struct{ Store }

@@ -203,7 +203,7 @@ func (s *Service) restoreVersion(ctx context.Context, token string) (storage.Ent
 	if exists {
 		condition = storage.Condition{IfMatch: p.CurrentETag}
 	}
-	result, err := (Backend{Service: s, ConnectionID: c.ID}).Put(ctx, p.Path, body, p.SourceSize, condition)
+	result, err := (Backend{Service: s, ConnectionID: c.ID}).putStrict(ctx, p.Path, body, p.SourceSize, condition, "")
 	if err != nil {
 		return result, err
 	}

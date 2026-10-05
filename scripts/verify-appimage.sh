@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 : "${VERSION:?}"
 : "${ARCH:?}"
-image="$PWD/dist/tamiops-${VERSION}-linux-${ARCH}.AppImage"
+image="$PWD/dist/tamias-${VERSION}-linux-${ARCH}.AppImage"
 test -x "$image"
 image=$(readlink -f "$image")
 test "$("$image" --appimage-extract-and-run -version)" = "$VERSION"
@@ -46,7 +46,7 @@ if [ "${GITHUB_ACTIONS:-}" = true ]; then
       exit 1
       ;;
   esac
-  apparmor_profile="tamiops-appimage-smoke-$$"
+  apparmor_profile="tamias-appimage-smoke-$$"
   apparmor_policy="$workspace/$apparmor_profile.profile"
   cat > "$apparmor_policy" <<PROFILE
 abi <abi/4.0>,
@@ -78,7 +78,7 @@ xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
       [ -r "$proc/exe" ] || continue
       executable=$(readlink -f "$proc/exe" 2>/dev/null || true)
       case "$executable" in
-        */usr/bin/tamiops) ;;
+        */usr/bin/tamias) ;;
         *) continue ;;
       esac
       cmdline=$(tr '\000' '\n' < "$proc/cmdline" 2>/dev/null || true)
@@ -97,10 +97,10 @@ xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
   fi
   executable=$(readlink -f "/proc/$app_pid/exe" 2>/dev/null || true)
   case "$executable" in
-    */usr/bin/tamiops) ;;
+    */usr/bin/tamias) ;;
     *)
       cat "$TAMIOPS_SMOKE_DIR/app.log"
-      echo "Smoke process is not the tamiops executable: ${executable:-unavailable}" >&2
+      echo "Smoke process is not the Tamias executable: ${executable:-unavailable}" >&2
       exit 1
       ;;
   esac

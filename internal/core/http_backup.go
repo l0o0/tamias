@@ -71,7 +71,7 @@ func (s *Service) backupCommand(r *http.Request) (any, error, bool) {
 			if base == "" {
 				return nil, errors.New("已取消恢复"), true
 			}
-			c.Destination = filepath.Join(base, "tamiops-恢复-"+ID()[:8])
+			c.Destination = filepath.Join(base, "tamias-恢复-"+ID()[:8])
 		}
 		var err error
 		if r.URL.Path == "/api/backups/restore-remote" {

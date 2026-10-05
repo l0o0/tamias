@@ -33,7 +33,7 @@ linuxdeploy GTK plugin
 
 The deployed GTK, WebKitGTK, and other Ubuntu runtime package names, binary
 versions, source package names, source versions, and Debian copyright texts are
-recorded in usr/share/doc/tamiops/system-dependencies/ in each AppImage. On
+recorded in usr/share/doc/tamias/system-dependencies/ in each AppImage. On
 Ubuntu 24.04 these source packages are available from the corresponding Ubuntu
 24.04 (Noble) source repositories; enable deb-src entries and use `apt-get
 source PACKAGE=VERSION` with the recorded source package and source version.

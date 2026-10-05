@@ -36,7 +36,7 @@ function isTopModal() {
 
 const focusableSelector = [
   'a[href]', 'area[href]', 'button:not(:disabled)', 'input:not(:disabled):not([type="hidden"])',
-  'select:not(:disabled)', 'textarea:not(:disabled)', 'iframe', '[contenteditable="true"]',
+  'select:not(:disabled)', 'textarea:not(:disabled)', 'summary', 'iframe', '[contenteditable="true"]',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
@@ -80,6 +80,16 @@ function restoreFocus() {
 function close() {
   if (!props.dismissible) return
   emit('update:modelValue', false)
+}
+
+function revealInvalidField(event: Event) {
+  // Reveal before the browser focuses its first invalid field. Do not cancel
+  // native validation or focus each error in turn when multiple fields fail.
+  let ancestor = event.target instanceof HTMLElement ? event.target.parentElement : null
+  while (ancestor && ancestor !== shell.value) {
+    if (ancestor instanceof HTMLDetailsElement) ancestor.open = true
+    ancestor = ancestor.parentElement
+  }
 }
 
 function focusLastDialogElement() {
@@ -182,7 +192,7 @@ onBeforeUnmount(() => {
           <div><h2>{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div>
           <button class="icon-button modal-close" aria-label="关闭弹窗" :disabled="!dismissible" @click="close"><X :size="18" /></button>
         </header>
-        <div class="modal-content"><slot /></div>
+        <div class="modal-content" @invalid.capture="revealInvalidField"><slot /></div>
       </section>
     </div>
   </Teleport>

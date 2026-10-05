@@ -30,7 +30,7 @@ func TestGeneratedConfigSaveUsesCoreValueAndSafePublish(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
-	if suggested != "tamiops-config.json" {
+	if suggested != "tamias-config.json" {
 		t.Fatalf("suggested name=%q", suggested)
 	}
 	var response struct {
@@ -80,7 +80,7 @@ func TestGeneratedDiagnosticsSaveBrowserFallback(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Saved || response.Name != "tamiops-diagnostics.json" || response.Value["version"] != Version {
+	if response.Saved || response.Name != "tamias-diagnostics.json" || response.Value["version"] != Version {
 		t.Fatalf("unexpected browser fallback: %+v", response)
 	}
 }

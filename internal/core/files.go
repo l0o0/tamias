@@ -133,6 +133,14 @@ func resource(c Connection, key string) (string, string) {
 	return ns, path.Join(u.Path, c.Prefix, key)
 }
 func (s *Service) writable(id, key string, deleting bool) (storage.Store, Connection, error) {
+	access := writeStrict
+	if deleting {
+		access = writeDelete
+	}
+	return s.writableWithAccess(id, key, access)
+}
+
+func (s *Service) writableWithAccess(id, key string, access writeAccess) (storage.Store, Connection, error) {
 	if err := validKey(key); err != nil {
 		return nil, Connection{}, err
 	}
@@ -143,8 +151,8 @@ func (s *Service) writable(id, key string, deleting bool) (storage.Store, Connec
 	if err != nil {
 		return nil, c, err
 	}
-	if !c.Capabilities.ConditionalWrite || (deleting && !c.Capabilities.ConditionalDelete) {
-		return nil, c, errors.New("请先在设置中验证条件写入能力；删除还需条件删除支持")
+	if err := checkWriteAccess(c, access); err != nil {
+		return nil, c, err
 	}
 	ns, k := resource(c, key)
 	var count int
@@ -162,7 +170,7 @@ func (s *Service) writable(id, key string, deleting bool) (storage.Store, Connec
 		return nil, c, err
 	}
 	if count > 0 {
-		return nil, c, errors.New("该资源有结果待核对的操作，已暂停写入；请查看活动与操作日志")
+		return nil, c, ErrPendingOperation
 	}
 	st, err := s.store(id)
 	return st, c, err
@@ -231,6 +239,13 @@ func (s *Service) spool(ctx context.Context, r io.Reader, size int64) (*os.File,
 	return staged, nil
 }
 func (s *Service) backup(ctx context.Context, st storage.Store, connectionID, key string, old storage.Entry, op string) error {
+	c, err := s.connection(connectionID)
+	if err != nil {
+		return err
+	}
+	if !c.KeepRecovery {
+		return nil
+	}
 	prefs := s.Preferences()
 	if old.Size > prefs.MaxFileBytes {
 		return errors.New("旧文件超过单文件上限，已停止覆盖")
@@ -246,7 +261,7 @@ func (s *Service) backup(ctx context.Context, st storage.Store, connectionID, ke
 		return err
 	}
 	defer r.Close()
-	if opened.ETag != old.ETag || opened.Size != old.Size {
+	if opened.ETag != old.ETag || opened.Size >= 0 && opened.Size != old.Size {
 		return storage.ErrConflict
 	}
 	f, err := os.OpenFile(filepath.Join(s.dir, "recovery", op+".data"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -366,6 +381,8 @@ func (s *Service) finish(id, kind, key string, receipt storage.Entry, opErr erro
 
 func safeOperationError(err error) string {
 	switch {
+	case errors.Is(err, errUploadedFileMissing):
+		return errUploadedFileMissing.Error()
 	case errors.Is(err, storage.ErrConflict):
 		return "条件冲突"
 	case errors.Is(err, storage.ErrNotFound):
@@ -397,8 +414,24 @@ func hashRemoteContent(ctx context.Context, s *Service, st storage.Store, key, e
 	if err != nil {
 		return "", storage.Entry{}, err
 	}
+	unknownLength := entry.Size < 0
+	if unknownLength {
+		current, statErr := st.Stat(ctx, key)
+		if statErr != nil || current.IsDir || current.Size < 0 || !strongTag(entry.ETag) || current.ETag != entry.ETag {
+			_ = r.Close()
+			if statErr != nil {
+				return "", entry, statErr
+			}
+			return "", entry, storage.ErrConflict
+		}
+		entry.Size = current.Size
+	}
+	if entry.Size > s.Preferences().MaxFileBytes {
+		_ = r.Close()
+		return "", entry, errors.New("远端内容超过单文件校验上限")
+	}
 	h := sha256.New()
-	n, readErr := io.Copy(h, s.limitReader(ctx, r))
+	n, readErr := io.Copy(h, io.LimitReader(s.limitReader(ctx, r), entry.Size+1))
 	closeErr := r.Close()
 	if readErr == nil {
 		readErr = closeErr
@@ -409,19 +442,38 @@ func hashRemoteContent(ctx context.Context, s *Service, st storage.Store, key, e
 	if n != entry.Size {
 		return "", entry, errors.New("远端读取内容不完整")
 	}
+	current, statErr := st.Stat(ctx, key)
+	if statErr != nil {
+		return "", entry, statErr
+	}
+	if current.IsDir || current.Size != entry.Size || current.ETag != entry.ETag {
+		return "", entry, storage.ErrConflict
+	}
 	return hex.EncodeToString(h.Sum(nil)), entry, nil
 }
 func (b Backend) Put(ctx context.Context, key string, r io.Reader, size int64, cond storage.Condition) (storage.Entry, error) {
 	return b.put(ctx, key, r, size, cond, "")
 }
 func (b Backend) put(ctx context.Context, key string, r io.Reader, size int64, cond storage.Condition, expectedHash string) (storage.Entry, error) {
+	return b.putWithAccess(ctx, key, r, size, cond, expectedHash, writeUpload, nil)
+}
+
+func (b Backend) putStrict(ctx context.Context, key string, r io.Reader, size int64, cond storage.Condition, expectedHash string) (storage.Entry, error) {
+	return b.putWithAccess(ctx, key, r, size, cond, expectedHash, writeStrict, nil)
+}
+
+func (b Backend) putWithAccess(ctx context.Context, key string, r io.Reader, size int64, cond storage.Condition, expectedHash string, access writeAccess, expectedConfig *storage.Config) (storage.Entry, error) {
 	s := b.Service
 	if err := s.checkManagedResource(ctx, b.ConnectionID, key); err != nil {
 		return storage.Entry{}, err
 	}
 	// Receive immutable content before acquiring the shared commit coordinator.
-	if _, _, err := s.writable(b.ConnectionID, key, false); err != nil {
+	_, initial, err := s.writableWithAccess(b.ConnectionID, key, access)
+	if err != nil {
 		return storage.Entry{}, err
+	}
+	if expectedConfig != nil && initial.Config != *expectedConfig {
+		return storage.Entry{}, storage.ErrConflict
 	}
 	if err := s.checkDAVLocks(ctx, b.ConnectionID, key); err != nil {
 		return storage.Entry{}, err
@@ -451,9 +503,12 @@ func (b Backend) put(ctx context.Context, key string, r io.Reader, size int64, c
 	}
 	s.writes.Lock()
 	defer s.writes.Unlock()
-	st, c, err := s.writable(b.ConnectionID, key, false)
+	st, c, err := s.writableWithAccess(b.ConnectionID, key, access)
 	if err != nil {
 		return storage.Entry{}, err
+	}
+	if c.Config != initial.Config {
+		return storage.Entry{}, storage.ErrConflict
 	}
 	if err = s.checkDAVLocks(ctx, c.ID, key); err != nil {
 		return storage.Entry{}, err
@@ -489,6 +544,19 @@ func (b Backend) put(ctx context.Context, key string, r io.Reader, size int64, c
 	} else {
 		cond = storage.Condition{IfNoneMatch: true}
 	}
+	verifyContent := access == writeCopy || c.WriteMode == storage.WriteModeCompatible || ordinaryWriteMode(c) && !canWriteStrict(c)
+	if verifyContent {
+		// Recovery reads may take time. Recheck immediately before committing;
+		// this reduces the race window but cannot replace server-side conditions.
+		current, currentErr := st.Stat(commit, key)
+		if exists && (currentErr != nil || current.IsDir || current.ETag != old.ETag || current.Size != old.Size) || !exists && !errors.Is(currentErr, storage.ErrNotFound) {
+			s.removeBackup(op)
+			if currentErr != nil && !errors.Is(currentErr, storage.ErrNotFound) {
+				return storage.Entry{}, currentErr
+			}
+			return storage.Entry{}, storage.ErrConflict
+		}
+	}
 	evidence := operationReceipt{Kind: "upload", DestinationConnection: c.ID, DestinationPath: key, DestinationHash: contentHash, DestinationSize: stagedSize, DestinationAbsent: !exists, Step: "prepared"}
 	if exists {
 		before := old
@@ -500,7 +568,25 @@ func (b Backend) put(ctx context.Context, key string, r io.Reader, size int64, c
 		return storage.Entry{}, err
 	}
 	result, opErr := s.putRemote(commit, c.ID, st, key, f, stagedSize, cond, op)
-	if opErr == nil && !strongTag(result.ETag) {
+	if opErr == nil && verifyContent {
+		verified, verifyErr := s.verifyUploadedContent(commit, st, key, contentHash, stagedSize)
+		if verifyErr != nil {
+			// Do not wrap ErrConflict/ErrNotFound here: the PUT already happened.
+			// Keep the recovery and staging bytes until the outcome is reconciled.
+			if errors.Is(verifyErr, errUploadedFileMissing) {
+				opErr = errUploadedFileMissing
+			} else {
+				opErr = fmt.Errorf("写入已提交，但回读校验未通过，结果需要核对（%s）：%v", key, verifyErr)
+			}
+		} else {
+			result = verified
+			evidence.Step = "destination-verified"
+			evidence.Destination = result
+			if err := s.recordOperation(op, evidence); err != nil {
+				opErr = errors.New("写入已核验，但回执未能持久化；结果需要核对")
+			}
+		}
+	} else if opErr == nil && !strongTag(result.ETag) {
 		opErr = errors.New("远端已响应，但未返回可靠的提交版本；结果需要核对")
 	}
 	err = s.finish(op, "upload", key, result, opErr)
@@ -534,13 +620,21 @@ func (b Backend) Delete(ctx context.Context, key string, cond storage.Condition)
 	return b.deleteLocked(ctx, st, c, key, cond)
 }
 func (b Backend) Mkdir(ctx context.Context, key string) error {
+	return b.mkdirWithAccess(ctx, key, writeUpload)
+}
+
+func (b Backend) mkdirStrict(ctx context.Context, key string) error {
+	return b.mkdirWithAccess(ctx, key, writeStrict)
+}
+
+func (b Backend) mkdirWithAccess(ctx context.Context, key string, access writeAccess) error {
 	s := b.Service
 	if err := s.checkManagedResource(ctx, b.ConnectionID, key); err != nil {
 		return err
 	}
 	s.writes.Lock()
 	defer s.writes.Unlock()
-	st, c, err := s.writable(b.ConnectionID, key, false)
+	st, c, err := s.writableWithAccess(b.ConnectionID, key, access)
 	if err != nil {
 		return err
 	}
@@ -565,6 +659,12 @@ func (b Backend) Mkdir(ctx context.Context, key string) error {
 		return err
 	}
 	err = st.Mkdir(commit, key)
+	if err == nil && ordinaryWriteMode(c) {
+		entry, verifyErr := st.Stat(commit, key)
+		if verifyErr != nil || !entry.IsDir {
+			err = errors.New("目录创建后的状态无法确认，结果需要核对")
+		}
+	}
 	return s.finish(op, "mkdir", key, storage.Entry{Path: key, IsDir: true}, err)
 }
 func (b Backend) Download(ctx context.Context, key, dest string) error {

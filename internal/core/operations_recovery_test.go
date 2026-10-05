@@ -254,6 +254,7 @@ func TestUnknownCrossConnectionMoveFreezesBothResources(t *testing.T) {
 
 func TestRecoveryRestoreRejectsChangedPreviewVersion(t *testing.T) {
 	s, id := testService(t)
+	setNormalRecoveryForTest(t, s, id, true)
 	b := Backend{Service: s, ConnectionID: id}
 	ctx := context.Background()
 	first, err := b.Put(ctx, "restore.txt", strings.NewReader("before"), 6, storage.Condition{IfNoneMatch: true})
@@ -287,6 +288,7 @@ func TestRecoveryRestoreRejectsChangedPreviewVersion(t *testing.T) {
 
 func TestRecoveryCanRestoreVerifiedCopyToOriginalRemotePath(t *testing.T) {
 	s, id := testService(t)
+	setNormalRecoveryForTest(t, s, id, true)
 	b := Backend{Service: s, ConnectionID: id}
 	ctx := context.Background()
 	first, err := b.Put(ctx, "restore.txt", strings.NewReader("before"), 6, storage.Condition{IfNoneMatch: true})
@@ -318,6 +320,7 @@ func TestRecoveryCanRestoreVerifiedCopyToOriginalRemotePath(t *testing.T) {
 
 func TestUncertainRecoveryCopyCannotBePrunedOrManuallyRemoved(t *testing.T) {
 	s, id := testService(t)
+	setNormalRecoveryForTest(t, s, id, true)
 	b := Backend{Service: s, ConnectionID: id}
 	ctx := context.Background()
 	first, err := b.Put(ctx, "keep.txt", strings.NewReader("before"), 6, storage.Condition{IfNoneMatch: true})

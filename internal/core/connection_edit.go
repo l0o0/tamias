@@ -39,12 +39,19 @@ type connectionEditImpact struct {
 }
 
 type connectionEditPreview struct {
-	Token        string               `json:"token"`
-	ExpiresAt    time.Time            `json:"expiresAt"`
-	Connection   storage.Config       `json:"connection"`
-	Candidate    storage.Config       `json:"candidate"`
-	Impact       connectionEditImpact `json:"impact"`
-	Capabilities storage.Capabilities `json:"capabilities"`
+	Token                 string               `json:"token"`
+	ExpiresAt             time.Time            `json:"expiresAt"`
+	Connection            storage.Config       `json:"connection"`
+	Candidate             storage.Config       `json:"candidate"`
+	WriteModeChanged      bool                 `json:"writeModeChanged"`
+	RecoveryChanged       bool                 `json:"recoveryChanged"`
+	PolicyChanged         bool                 `json:"policyChanged"`
+	Impact                connectionEditImpact `json:"impact"`
+	Capabilities          storage.Capabilities `json:"capabilities"`
+	WriteRestriction      string               `json:"writeRestriction,omitempty"`
+	CompatibilityProfile  string               `json:"compatibilityProfile,omitempty"`
+	CapabilityVersion     int                  `json:"capabilityVersion,omitempty"`
+	CapabilitiesCheckedAt string               `json:"capabilitiesCheckedAt,omitempty"`
 }
 
 type connectionEditStoredPreview struct {
@@ -79,6 +86,11 @@ func normalizeConnectionEdit(in ConnectionInput) (storage.Config, error) {
 	c.Bucket = strings.TrimSpace(c.Bucket)
 	c.Prefix = strings.Trim(c.Prefix, "/")
 	c.Username = strings.TrimSpace(c.Username)
+	writeMode, err := storage.NormalizeWriteMode(c.WriteMode)
+	if err != nil {
+		return storage.Config{}, err
+	}
+	c.WriteMode = writeMode
 	if c.ID == "" || c.Name == "" {
 		return storage.Config{}, errors.New("连接编号或名称无效")
 	}
@@ -99,6 +111,20 @@ func connectionStorageScopeChanged(a, b storage.Config) bool {
 		return a.Username != b.Username
 	}
 	return a.Region != b.Region || a.Bucket != b.Bucket || a.PathStyle != b.PathStyle
+}
+
+func connectionWriteModeChanged(a, b storage.Config) bool {
+	oldMode, _ := storage.NormalizeWriteMode(a.WriteMode)
+	newMode, _ := storage.NormalizeWriteMode(b.WriteMode)
+	return oldMode != newMode
+}
+
+func connectionRecoveryChanged(a, b storage.Config) bool {
+	return a.KeepRecovery != b.KeepRecovery
+}
+
+func connectionPolicyChanged(a, b storage.Config) bool {
+	return connectionWriteModeChanged(a, b) || connectionRecoveryChanged(a, b)
 }
 
 func connectionCredentialKey(in ConnectionInput, old storage.Credentials, cfg storage.Config) storage.Credentials {
@@ -294,6 +320,9 @@ func (s *Service) previewConnectionEdit(ctx context.Context, in ConnectionInput)
 	oldFingerprint := editConfigFingerprint(old.Config)
 	candidateFingerprint := editCandidateFingerprint(candidate, creds)
 	scopeChanged := connectionStorageScopeChanged(old.Config, candidate)
+	writeModeChanged := connectionWriteModeChanged(old.Config, candidate)
+	recoveryChanged := connectionRecoveryChanged(old.Config, candidate)
+	policyChanged := writeModeChanged || recoveryChanged
 	impact, err := s.connectionEditReferences(candidate.ID, old.Config, scopeChanged)
 	if err != nil {
 		s.writes.Unlock()
@@ -301,10 +330,10 @@ func (s *Service) previewConnectionEdit(ctx context.Context, in ConnectionInput)
 	}
 	if len(impact.Blockers) > 0 {
 		s.writes.Unlock()
-		return connectionEditPreview{Connection: old.Config, Candidate: candidate, Impact: impact}, nil
+		return connectionEditPreview{Connection: old.Config, Candidate: candidate, WriteModeChanged: writeModeChanged, RecoveryChanged: recoveryChanged, PolicyChanged: policyChanged, Impact: impact}, nil
 	}
-	// Probe can write through a local gateway served by this same Service. Do
-	// not hold the commit coordinator while issuing that network request.
+	// Connection validation can reach a local gateway served by this Service.
+	// Do not hold the commit coordinator while issuing that network request.
 	s.writes.Unlock()
 	store, err := storage.New(candidate, creds)
 	if err != nil {
@@ -312,13 +341,12 @@ func (s *Service) previewConnectionEdit(ctx context.Context, in ConnectionInput)
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if _, err = store.List(probeCtx, ""); err != nil {
-		return connectionEditPreview{}, fmt.Errorf("连接测试失败：%w", err)
-	}
-	caps, err := storage.Probe(probeCtx, store)
+	detection, err := detectConnectionCapabilities(probeCtx, store, candidate.WriteMode, true)
 	if err != nil {
-		return connectionEditPreview{}, fmt.Errorf("能力验证失败：%w", err)
+		return connectionEditPreview{}, err
 	}
+	caps := detection.Capabilities
+	writeRestriction := detection.WriteRestriction
 	s.writes.Lock()
 	defer s.writes.Unlock()
 	current, err := s.connection(candidate.ID)
@@ -332,16 +360,16 @@ func (s *Service) previewConnectionEdit(ctx context.Context, in ConnectionInput)
 	if editConfigFingerprint(current.Config) != oldFingerprint || editCandidateFingerprint(candidate, connectionCredentialKey(in, currentCreds, candidate)) != candidateFingerprint {
 		return connectionEditPreview{}, storage.ErrConflict
 	}
-	// Probe performs remote I/O, so recheck local references and the exact
+	// Remote validation has completed, so recheck local references and the exact
 	// config/credential snapshot before issuing a token.
 	impact, err = s.connectionEditReferences(candidate.ID, old.Config, scopeChanged)
 	if err != nil {
 		return connectionEditPreview{}, err
 	}
 	if len(impact.Blockers) > 0 {
-		return connectionEditPreview{Connection: old.Config, Candidate: candidate, Impact: impact, Capabilities: caps}, nil
+		return connectionEditPreview{Connection: old.Config, Candidate: candidate, WriteModeChanged: writeModeChanged, RecoveryChanged: recoveryChanged, PolicyChanged: policyChanged, Impact: impact, Capabilities: caps, WriteRestriction: writeRestriction, CompatibilityProfile: detection.CompatibilityProfile, CapabilityVersion: detection.CapabilityVersion, CapabilitiesCheckedAt: detection.CapabilitiesCheckedAt}, nil
 	}
-	capRaw, _ := json.Marshal(caps)
+	capRaw, _ := json.Marshal(detection)
 	token := ID()
 	expires := time.Now().Add(connectionEditPreviewTTL).UTC()
 	_, err = s.db.Exec(`INSERT INTO connection_edit_previews(token,connection,old_config,candidate,scope_changed,capabilities,expires) VALUES(?,?,?,?,?,?,?)`, token, candidate.ID, editConfigFingerprint(old.Config), editCandidateFingerprint(candidate, creds), scopeChanged, string(capRaw), expires.Format(time.RFC3339Nano))
@@ -349,7 +377,7 @@ func (s *Service) previewConnectionEdit(ctx context.Context, in ConnectionInput)
 		return connectionEditPreview{}, err
 	}
 	_, _ = s.db.Exec(`DELETE FROM connection_edit_previews WHERE expires<?`, time.Now().UTC().Format(time.RFC3339Nano))
-	return connectionEditPreview{Token: token, ExpiresAt: expires, Connection: old.Config, Candidate: candidate, Impact: impact, Capabilities: caps}, nil
+	return connectionEditPreview{Token: token, ExpiresAt: expires, Connection: old.Config, Candidate: candidate, WriteModeChanged: writeModeChanged, RecoveryChanged: recoveryChanged, PolicyChanged: policyChanged, Impact: impact, Capabilities: caps, WriteRestriction: writeRestriction, CompatibilityProfile: detection.CompatibilityProfile, CapabilityVersion: detection.CapabilityVersion, CapabilitiesCheckedAt: detection.CapabilitiesCheckedAt}, nil
 }
 
 func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, token string) (Connection, error) {
@@ -387,7 +415,9 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	var oldRaw string
 	var creds storage.Credentials
 	var stored connectionEditStoredPreview
+	var detection connectionDetection
 	var scopeChanged bool
+	var policyChanged bool
 	var impact connectionEditImpact
 	s.writes.Lock()
 	prepareErr := func() error {
@@ -419,7 +449,11 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 		if parseErr != nil || time.Now().After(expires) || stored.ConnectionID != candidate.ID || stored.OldConfig != editConfigFingerprint(old.Config) || stored.Candidate != editCandidateFingerprint(candidate, creds) {
 			return storage.ErrConflict
 		}
+		if err = json.Unmarshal([]byte(stored.Capabilities), &detection); err != nil || !detection.current() {
+			return storage.ErrConflict
+		}
 		scopeChanged = connectionStorageScopeChanged(old.Config, candidate)
+		policyChanged = connectionPolicyChanged(old.Config, candidate)
 		if scopeChanged != stored.ScopeChanged {
 			return storage.ErrConflict
 		}
@@ -436,9 +470,9 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	if prepareErr != nil {
 		return Connection{}, prepareErr
 	}
-	// The probe may write through a local gateway served by this same Service.
-	// The persisted preview and post-probe checks protect the edit without
-	// holding the commit coordinator across that network request.
+	// Recheck list access before commit. Conditional capabilities come from the
+	// preview token bound to this exact config and credential snapshot, avoiding
+	// a second full probe while still confirming the endpoint is reachable.
 	store, err := storage.New(candidate, creds)
 	if err != nil {
 		return Connection{}, err
@@ -448,10 +482,8 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	if _, err = store.List(commitCtx, ""); err != nil {
 		return Connection{}, fmt.Errorf("提交前连接复核失败：%w", err)
 	}
-	caps, err := storage.Probe(commitCtx, store)
-	if err != nil {
-		return Connection{}, fmt.Errorf("提交前能力复核失败：%w", err)
-	}
+	caps := detection.Capabilities
+	writeRestriction := detection.WriteRestriction
 	s.writes.Lock()
 	defer s.writes.Unlock()
 	current, err := s.connection(candidate.ID)
@@ -484,11 +516,12 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 		return Connection{}, storage.ErrConflict
 	}
 	scopeChanged = connectionStorageScopeChanged(old.Config, candidate)
+	policyChanged = connectionPolicyChanged(old.Config, candidate)
 	if scopeChanged != stored.ScopeChanged {
 		return Connection{}, storage.ErrConflict
 	}
-	var previewCaps storage.Capabilities
-	if err = json.Unmarshal([]byte(stored.Capabilities), &previewCaps); err != nil || previewCaps != caps {
+	var detectionAgain connectionDetection
+	if err = json.Unmarshal([]byte(storedAgain.Capabilities), &detectionAgain); err != nil || detectionAgain != detection || detectionAgain.Capabilities != caps || detectionAgain.WriteRestriction != writeRestriction {
 		return Connection{}, storage.ErrConflict
 	}
 	impact, err = s.connectionEditReferences(candidate.ID, old.Config, scopeChanged)
@@ -500,9 +533,7 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	}
 	updated := old
 	updated.Config = candidate
-	updated.Tested = true
-	updated.Capabilities = caps
-	updated.Error = ""
+	applyConnectionDetection(&updated, detection)
 	newRawBytes, err := json.Marshal(creds)
 	if err != nil {
 		return Connection{}, err
@@ -510,14 +541,14 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	key := "connection:" + candidate.ID
 
 	s.mu.Lock()
-	if scopeChanged {
+	if scopeChanged || policyChanged {
 		latestJobIDs := make([]string, 0)
 		for _, job := range s.cfg.Jobs {
 			if job.ConnectionID != candidate.ID {
 				continue
 			}
 			latestJobIDs = append(latestJobIDs, job.ID)
-			if job.Status == "running" || job.Enabled {
+			if job.Status == "running" || scopeChanged && job.Enabled {
 				s.mu.Unlock()
 				return Connection{}, storage.ErrConflict
 			}
@@ -568,12 +599,16 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	}
 	s.cfg.Connections[index] = updated
 	s.stores[candidate.ID] = store
-	if scopeChanged {
+	if scopeChanged || policyChanged {
 		for i := range s.cfg.Jobs {
 			if s.cfg.Jobs[i].ConnectionID == candidate.ID {
 				s.cfg.Jobs[i].Enabled = false
 				s.cfg.Jobs[i].Status = "paused"
-				s.cfg.Jobs[i].Detail = "连接存储范围已更改，旧同步基线已重置；重新预览后再恢复"
+				if scopeChanged {
+					s.cfg.Jobs[i].Detail = "连接存储范围已更改，旧同步基线已重置；重新预览后再恢复"
+				} else {
+					s.cfg.Jobs[i].Detail = "连接写入策略或恢复副本设置已更改，旧预览计划已作废；重新预览后再启用"
+				}
 			}
 		}
 	}
@@ -587,9 +622,13 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 	if txErr == nil {
 		_, txErr = tx.Exec(`INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, string(configBytes))
 	}
-	if txErr == nil && scopeChanged {
+	if txErr == nil && (scopeChanged || policyChanged) {
 		for _, id := range jobIDs {
-			for _, table := range []string{"baseline", "sync_queue", "sync_plans", "sync_dirty"} {
+			tables := []string{"sync_queue", "sync_plans", "sync_dirty"}
+			if scopeChanged {
+				tables = append(tables, "baseline")
+			}
+			for _, table := range tables {
 				if _, txErr = tx.Exec(`DELETE FROM `+table+` WHERE job=?`, id); txErr != nil {
 					break
 				}
@@ -598,7 +637,7 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 				break
 			}
 		}
-		if txErr == nil {
+		if txErr == nil && scopeChanged {
 			_, txErr = tx.Exec(`DELETE FROM version_restore_previews WHERE connection=?`, candidate.ID)
 		}
 	}
@@ -626,9 +665,7 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 		}
 		if rollbackErr != nil {
 			disabled := oldConnection
-			disabled.Tested = false
-			disabled.Capabilities = storage.Capabilities{}
-			disabled.Error = "凭据回滚失败，连接已禁用；请重新输入并测试凭据"
+			invalidateConnectionDetection(&disabled, "凭据回滚失败，连接已禁用；请重新输入并测试凭据")
 			s.cfg.Connections[index] = disabled
 			s.stores[candidate.ID] = unavailableCredentialStore{}
 			persistErr := s.saveLocked()
@@ -639,7 +676,7 @@ func (s *Service) applyConnectionEdit(ctx context.Context, in ConnectionInput, t
 		return Connection{}, txErr
 	}
 	s.mu.Unlock()
-	if scopeChanged {
+	if scopeChanged || policyChanged {
 		s.mu.Lock()
 		for tok, plan := range s.plans {
 			for _, id := range jobIDs {

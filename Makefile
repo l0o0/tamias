@@ -14,4 +14,4 @@ build:
 cli:
 	sh scripts/build-cli.sh
 run: build
-	open bin/tamiops.app
+	open bin/tamias.app

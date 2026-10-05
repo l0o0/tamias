@@ -4,28 +4,52 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
 var ErrNotFound = errors.New("资源不存在")
 var ErrConflict = errors.New("资源已变化，请刷新后重试")
 var ErrUnsupported = errors.New("存储服务不支持此操作")
+var ErrConditionalUnsupported = errors.New("存储服务不支持安全条件读写")
 var ErrInvalidPath = errors.New("无效路径")
 var ErrInvalidRange = errors.New("无效或不可满足的范围")
 var ErrPartialOperation = errors.New("操作仅部分完成")
 var ErrLocked = errors.New("资源已锁定")
 
 type Config struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Endpoint  string `json:"endpoint"`
-	Region    string `json:"region"`
-	Bucket    string `json:"bucket"`
-	Prefix    string `json:"prefix"`
-	Username  string `json:"username"`
-	PathStyle bool   `json:"pathStyle"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	WriteMode    string `json:"writeMode,omitempty"`
+	KeepRecovery bool   `json:"keepRecovery,omitempty"`
+	Endpoint     string `json:"endpoint"`
+	Region       string `json:"region"`
+	Bucket       string `json:"bucket"`
+	Prefix       string `json:"prefix"`
+	Username     string `json:"username"`
+	PathStyle    bool   `json:"pathStyle"`
 }
+
+const (
+	WriteModeStandard   = "standard"
+	WriteModeStrict     = "strict"
+	WriteModeCopy       = "copy"
+	WriteModeCompatible = "compatible"
+)
+
+// NormalizeWriteMode applies the normal-sync default and rejects unknown policies.
+func NormalizeWriteMode(mode string) (string, error) {
+	switch strings.TrimSpace(mode) {
+	case "":
+		return WriteModeStandard, nil
+	case WriteModeStandard, WriteModeStrict, WriteModeCopy, WriteModeCompatible:
+		return strings.TrimSpace(mode), nil
+	default:
+		return "", errors.New("无效写入保护模式")
+	}
+}
+
 type Credentials struct {
 	Username     string `json:"username"`
 	Password     string `json:"password"`

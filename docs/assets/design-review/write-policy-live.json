@@ -1,0 +1,71 @@
+{
+  "endpoint": "https://data.cstcloud.cn/dav",
+  "temporaryPaths": 3,
+  "tests": [
+    {
+      "test": "compatible connection readable",
+      "passed": true
+    },
+    {
+      "test": "compatible create verified",
+      "passed": true
+    },
+    {
+      "test": "compatible overwrite verified",
+      "passed": true
+    },
+    {
+      "test": "overwrite content matches",
+      "passed": true
+    },
+    {
+      "test": "stale version rejected locally",
+      "passed": true
+    },
+    {
+      "test": "old version retained locally",
+      "passed": true
+    },
+    {
+      "test": "unsafe delete stays disabled",
+      "passed": true
+    },
+    {
+      "test": "copy connection readable",
+      "passed": true
+    },
+    {
+      "test": "copy upload verified",
+      "passed": true
+    },
+    {
+      "test": "copy upload verified",
+      "passed": true
+    },
+    {
+      "test": "repeated copies have distinct paths",
+      "passed": true
+    },
+    {
+      "test": "original preserved by copy uploads",
+      "passed": true
+    },
+    {
+      "test": "strict mode still blocks unverified writes",
+      "passed": true
+    },
+    {
+      "test": "temporary file removed",
+      "passed": true
+    },
+    {
+      "test": "temporary file removed",
+      "passed": true
+    },
+    {
+      "test": "temporary file removed",
+      "passed": true
+    }
+  ],
+  "timestamp": "2026-10-04T04:56:29.914294Z"
+}

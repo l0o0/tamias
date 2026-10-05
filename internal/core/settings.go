@@ -311,7 +311,7 @@ func (s *Service) ExportConfiguration() (ConfigurationExport, error) {
 	}
 	return out, nil
 }
-func (s *Service) ImportConfiguration(in ConfigurationExport) (map[string]int, error) {
+func (s *Service) ImportConfiguration(in ConfigurationExport) (counts map[string]int, retErr error) {
 	if in.Version != 1 || len(in.Connections) > 100 || len(in.Jobs) > 500 || len(in.Gateways) > 100 || len(in.BackupJobs) > 500 || len(in.MigrationJobs) > 500 {
 		return nil, errors.New("配置版本或数量无效")
 	}
@@ -320,6 +320,11 @@ func (s *Service) ImportConfiguration(in ConfigurationExport) (map[string]int, e
 	jobs := []Job{}
 	gates := []Gateway{}
 	for _, c := range in.Connections {
+		mode, err := storage.NormalizeWriteMode(c.WriteMode)
+		if err != nil {
+			return nil, err
+		}
+		c.WriteMode = mode
 		if c.ID == "" || idmap[c.ID] != "" || strings.TrimSpace(c.Name) == "" {
 			return nil, errors.New("连接标识或名称无效")
 		}
@@ -331,6 +336,9 @@ func (s *Service) ImportConfiguration(in ConfigurationExport) (map[string]int, e
 		connections = append(connections, Connection{Config: c, Error: "请补充凭据并测试连接"})
 	}
 	for _, j := range in.Jobs {
+		if err := validateJobIcon(j.Icon); err != nil {
+			return nil, err
+		}
 		if idmap[j.ConnectionID] == "" {
 			return nil, errors.New("任务引用了缺失连接")
 		}
@@ -448,6 +456,36 @@ func (s *Service) ImportConfiguration(in ConfigurationExport) (map[string]int, e
 	}
 	p.AutoStart = old.Preferences.AutoStart
 	p.Notifications = old.Preferences.Notifications
+	credentialJSON, err := json.Marshal(storage.Credentials{})
+	if err != nil {
+		return nil, err
+	}
+	initializedCredentialKeys := make([]string, 0, len(connections))
+	credentialsCommitted := false
+	defer func() {
+		if credentialsCommitted {
+			return
+		}
+		var rollbackErr error
+		for i := len(initializedCredentialKeys) - 1; i >= 0; i-- {
+			if err := s.vault.Delete(initializedCredentialKeys[i]); err != nil {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("回滚导入凭据 %s 失败：%w", initializedCredentialKeys[i], err))
+			}
+		}
+		if rollbackErr != nil {
+			retErr = errors.Join(retErr, rollbackErr)
+			counts = nil
+		}
+	}()
+	for _, connection := range connections {
+		key := "connection:" + connection.ID
+		// IDs for imported connections are freshly generated, so these keys do
+		// not replace credentials belonging to an existing connection.
+		initializedCredentialKeys = append(initializedCredentialKeys, key)
+		if err := s.vault.Set(key, string(credentialJSON)); err != nil {
+			return nil, fmt.Errorf("初始化导入连接凭据失败：%w", err)
+		}
+	}
 	s.cfg.Connections = append(append([]Connection{}, old.Connections...), connections...)
 	s.cfg.Jobs = append(append([]Job{}, old.Jobs...), jobs...)
 	s.cfg.Gateways = append(append([]Gateway{}, old.Gateways...), gates...)
@@ -486,6 +524,7 @@ func (s *Service) ImportConfiguration(in ConfigurationExport) (map[string]int, e
 		return nil, err
 	}
 	committed = true
+	credentialsCommitted = true
 	return map[string]int{"connections": len(connections), "jobs": len(jobs), "gateways": len(gates), "backupJobs": len(backups), "migrationJobs": len(migrations)}, nil
 
 }
@@ -511,7 +550,8 @@ func (s *Service) UpdateCredentials(ctx context.Context, in ConnectionInput) err
 	if err != nil {
 		return err
 	}
-	if _, err = st.List(ctx, ""); err != nil {
+	detection, err := detectConnectionCapabilities(ctx, st, cfg.WriteMode, true)
+	if err != nil {
 		return err
 	}
 	raw, err := json.Marshal(creds)
@@ -544,9 +584,7 @@ func (s *Service) UpdateCredentials(ctx context.Context, in ConnectionInput) err
 	}
 	disableAfterRollbackFailure := func(cause error) error {
 		conn := oldConnection
-		conn.Tested = false
-		conn.Capabilities = storage.Capabilities{}
-		conn.Error = "凭据更新回滚失败，连接已禁用；请重新输入并测试凭据"
+		invalidateConnectionDetection(&conn, "凭据更新回滚失败，连接已禁用；请重新输入并测试凭据")
 		s.cfg.Connections[index] = conn
 		s.stores[in.ID] = unavailableCredentialStore{}
 		persistErr := s.saveLocked()
@@ -571,9 +609,7 @@ func (s *Service) UpdateCredentials(ctx context.Context, in ConnectionInput) err
 	}
 	updated := oldConnection
 	updated.Config = cfg
-	updated.Capabilities = storage.Capabilities{}
-	updated.Tested = true
-	updated.Error = ""
+	applyConnectionDetection(&updated, detection)
 	s.cfg.Connections[index] = updated
 	s.stores[in.ID] = st
 	if err = s.saveLocked(); err == nil {

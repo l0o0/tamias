@@ -157,12 +157,12 @@ func TestBandwidthCancellationAndReadAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r, _, err := (Backend{s, id}).Open(ctx, "欢迎使用 tamiops.md", "")
+	r, _, err := (Backend{s, id}).Open(ctx, "欢迎使用小花鼠.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	if _, _, err = (Backend{s, id}).Open(ctx, "欢迎使用 tamiops.md", ""); err == nil {
+	if _, _, err = (Backend{s, id}).Open(ctx, "欢迎使用小花鼠.md", ""); err == nil {
 		t.Fatal("reader quota exceeded")
 	}
 	cancel()

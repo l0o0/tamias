@@ -83,6 +83,7 @@ func TestIncompleteUploadNeverCommits(t *testing.T) {
 }
 func TestConditionalWriteAndRecovery(t *testing.T) {
 	s, id := testService(t)
+	setNormalRecoveryForTest(t, s, id, true)
 	b := Backend{s, id}
 	ctx := context.Background()
 	e, err := b.Put(ctx, "note.txt", strings.NewReader("before"), 6, storage.Condition{IfNoneMatch: true})
@@ -224,7 +225,7 @@ func TestIncrementalSyncAndStalePreview(t *testing.T) {
 func TestFirstSyncConflictAndNoDeletePropagation(t *testing.T) {
 	s, id := testService(t)
 	local := t.TempDir()
-	os.WriteFile(filepath.Join(local, "欢迎使用 tamiops.md"), []byte("local"), 0600)
+	os.WriteFile(filepath.Join(local, "欢迎使用小花鼠.md"), []byte("local"), 0600)
 	j, err := s.AddJob(Job{Name: "test", ConnectionID: id, LocalPath: local, Direction: "both"})
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +237,7 @@ func TestFirstSyncConflictAndNoDeletePropagation(t *testing.T) {
 	if _, err = s.RunPlan(context.Background(), j.ID, p.Token); err == nil {
 		t.Fatal("first sync conflict accepted")
 	}
-	if got, _ := os.ReadFile(filepath.Join(local, "欢迎使用 tamiops.md")); string(got) != "local" {
+	if got, _ := os.ReadFile(filepath.Join(local, "欢迎使用小花鼠.md")); string(got) != "local" {
 		t.Fatal("local overwritten")
 	}
 }

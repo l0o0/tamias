@@ -1,4 +1,6 @@
 export type ConnectionKind = 'webdav' | 's3' | 'demo'
+export type WriteMode = 'standard' | 'strict' | 'copy' | 'compatible'
+export type CompatibilityProfile = 'conditional' | 'compatible' | 'read-checked' | 'limited' | 'failed'
 export type Direction = 'both' | 'upload' | 'download' | 'mirror-upload' | 'mirror-download'
 
 export interface Connection {
@@ -11,13 +13,21 @@ export interface Connection {
   prefix: string
   username: string
   pathStyle: boolean
+  writeMode?: WriteMode
+  keepRecovery?: boolean
   tested: boolean
   capabilities: { conditionalWrite: boolean; conditionalDelete: boolean; rangeRead?: boolean; multipartConditional?: boolean }
   error: string
+  writeRestriction?: string
+  capabilityVersion?: number
+  capabilitiesCheckedAt?: string
+  compatibilityProfile?: CompatibilityProfile
+  detecting?: boolean
 }
 export interface Job {
   id: string
   name: string
+  icon?: string
   connectionId: string
   localPath: string
   remotePath: string
@@ -35,6 +45,7 @@ export interface Job {
   progress?: number
   queueTotal?: number
   queueDone?: number
+  activeAction?: string
 }
 export interface Gateway {
   id: string
@@ -259,7 +270,7 @@ export interface ConfigurationExport {
   version: number
   backupJobs?: unknown[]
   migrationJobs?: unknown[]
-  connections: Omit<Connection, 'tested' | 'capabilities' | 'error'>[]
+  connections: Omit<Connection, 'tested' | 'capabilities' | 'error' | 'writeRestriction'>[]
   jobs: Job[]
   gateways: Gateway[]
   preferences: Preferences

@@ -1,6 +1,6 @@
-tamiops — Third-party notices
+Tamias — Third-party notices
 
-tamiops source code is licensed under AGPL-3.0-only; see LICENSE.
+Tamias source code is licensed under AGPL-3.0-only; see LICENSE.
 The following dependencies retain their own licenses. This document
 contains Go module and production npm dependency license/notice texts.
 SQLite, embedded by go-sqlite3, is public domain: https://sqlite.org/copyright.html

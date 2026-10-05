@@ -27,7 +27,13 @@ import (
 var assets embed.FS
 
 //go:embed build/assets/app-icon.png
-var icon []byte
+var appIcon []byte
+
+//go:embed build/assets/tray-icon.png
+var trayIcon []byte
+
+//go:embed build/assets/tray-tail/*.png
+var trayTailAssets embed.FS
 
 func main() {
 	if err := run(); err != nil {
@@ -85,7 +91,7 @@ func runBrowser(dataDir string) error {
 	defer signal.Stop(sig)
 	closed := make(chan struct{})
 	go func() { <-sig; _ = srv.Close(); _ = service.Close(); close(closed) }()
-	log.Println("tamiops development host: http://127.0.0.1:9240")
+	log.Println("Tamias development host: http://127.0.0.1:9240")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -120,6 +126,18 @@ func runDesktop(dataDir string) error {
 	if err != nil {
 		return err
 	}
+	frameEntries, err := trayTailAssets.ReadDir("build/assets/tray-tail")
+	if err != nil {
+		return err
+	}
+	trayFrames := make([][]byte, 0, len(frameEntries))
+	for _, entry := range frameEntries {
+		frame, err := trayTailAssets.ReadFile("build/assets/tray-tail/" + entry.Name())
+		if err != nil {
+			return err
+		}
+		trayFrames = append(trayFrames, frame)
+	}
 	assetHandler := &handlerSlot{}
 	notifier := notifications.New()
 	var service *core.Service
@@ -145,7 +163,7 @@ func runDesktop(dataDir string) error {
 		focusTarget.Show()
 		focusTarget.Focus()
 	}
-	app := application.New(application.Options{Name: "tamiops", Description: "WebDAV 与 S3 私有存储工作台", Icon: icon, LogLevel: slog.LevelWarn,
+	app := application.New(application.Options{Name: "小花鼠", Description: "WebDAV 与 S3 私有存储工作台", Icon: appIcon, LogLevel: slog.LevelWarn,
 		Services: []application.Service{application.NewService(notifier)},
 		Assets:   application.AssetOptions{Handler: assetHandler, DisableLogging: true},
 		Mac:      application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: false},
@@ -171,12 +189,12 @@ func runDesktop(dataDir string) error {
 	// Refresh the registered executable after an app move or product rename.
 	if service.Preferences().AutoStart {
 		if err := service.SetAutoStart(true); err != nil {
-			log.Printf("更新 tamiops 登录启动路径失败：%v", err)
+			log.Printf("更新小花鼠登录启动路径失败：%v", err)
 		}
 	}
 	service.OpenLocal = desktop.Open
 	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "tamiops", Width: 760, Height: 620, MinWidth: 620, MinHeight: 500,
+		Title: "小花鼠", Width: 760, Height: 620, MinWidth: 620, MinHeight: 500,
 		URL: "/", BackgroundColour: application.NewRGB(244, 244, 247),
 		Mac: application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
 	})
@@ -221,14 +239,36 @@ func runDesktop(dataDir string) error {
 	service.StartScheduler()
 	service.StartMaintenance()
 	tray := app.SystemTray.New()
-	tray.SetLabel("tamiops")
 	if runtime.GOOS == "darwin" {
-		tray.SetTemplateIcon(icon)
+		tray.SetTemplateIcon(trayIcon)
 	} else {
-		tray.SetIcon(icon)
+		tray.SetIcon(trayIcon)
 	}
+	trayContext := app.Context()
+	playTrayGreeting := desktop.NewTrayAnimation(trayContext, trayFrames, trayIcon, 1050*time.Millisecond/time.Duration(len(trayFrames)), func(icon []byte) {
+		applied := make(chan struct{})
+		application.InvokeAsync(func() {
+			defer close(applied)
+			// Check on the UI thread as well: a frame queued just before
+			// shutdown must never update the destroyed native tray.
+			if trayContext.Err() != nil {
+				return
+			}
+			if runtime.GOOS == "darwin" {
+				tray.SetTemplateIcon(icon)
+			} else {
+				tray.SetIcon(icon)
+			}
+		})
+		// Wait for this frame before requesting another, but never wait on
+		// the UI during shutdown. This prevents queued frames bunching up.
+		select {
+		case <-applied:
+		case <-trayContext.Done():
+		}
+	})
 	menu := app.NewMenu()
-	menu.Add("打开 tamiops").OnClick(func(*application.Context) { window.Show(); window.Focus() })
+	menu.Add("打开小花鼠").OnClick(func(*application.Context) { window.Show(); window.Focus() })
 	menu.Add("暂停所有同步").OnClick(func(*application.Context) {
 		for _, job := range service.Snapshot()["jobs"].([]core.Job) {
 			_ = service.CancelJob(job.ID)
@@ -240,9 +280,12 @@ func runDesktop(dataDir string) error {
 		}
 		service.WakeScheduler()
 	})
-	menu.Add("退出 tamiops").OnClick(func(*application.Context) { app.Quit() })
+	menu.Add("退出小花鼠").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
-	tray.OnClick(func() { window.Show(); window.Focus() })
+	tray.OnClick(func() {
+		playTrayGreeting()
+		focusWindow()
+	})
 	service.PickFolder = func() (string, error) {
 		return desktop.PromptWithContext(app.Context(), func() (string, error) {
 			return app.Dialog.OpenFile().SetTitle("选择本地同步文件夹").CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()

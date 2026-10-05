@@ -16,19 +16,19 @@
 
 [Setup]
 AppId={{DDF67207-8F8A-4AE0-BAA8-472711E78643}
-AppName=tamiops
+AppName={cm:ProductName}
 AppVersion={#AppVersion}
-AppVerName=tamiops {#AppVersion}
-AppPublisher=tamiops
-DefaultDirName={localappdata}\Programs\tamiops
-DefaultGroupName=tamiops
+AppVerName={cm:ProductName} {#AppVersion}
+AppPublisher=Tamias
+DefaultDirName={localappdata}\Programs\tamias
+DefaultGroupName=Tamias
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 LicenseFile="{#RepoRoot}\LICENSE"
 OutputDir="{#RepoRoot}\dist"
-OutputBaseFilename=tamiops-{#AppVersion}-windows-{#AppArch}-setup
-SetupIconFile="{#SourcePath}\tamiops.ico"
-UninstallDisplayIcon={app}\tamiops.ico
+OutputBaseFilename=tamias-{#AppVersion}-windows-{#AppArch}-setup
+SetupIconFile="{#SourcePath}\tamias.ico"
+UninstallDisplayIcon={app}\tamias.ico
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=lowest
@@ -37,9 +37,9 @@ RestartApplications=no
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-VersionInfoCompany=tamiops
-VersionInfoProductName=tamiops
-VersionInfoDescription=tamiops Setup
+VersionInfoCompany=Tamias
+VersionInfoProductName=Tamias
+VersionInfoDescription=Tamias Setup
 VersionInfoVersion={#AppNumericVersion}
 VersionInfoProductVersion={#AppNumericVersion}
 VersionInfoTextVersion={#AppVersion}
@@ -53,32 +53,34 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "{#SourcePath}\ChineseSimplified.isl"
 
 [CustomMessages]
-english.WebView2Missing=The Microsoft Edge WebView2 Runtime is required to run tamiops. Open Microsoft's official download page now? Install the Evergreen Runtime there, then run this setup again.
+english.ProductName=Tamias
+chinesesimp.ProductName=小花鼠 Tamias
+english.WebView2Missing=The Microsoft Edge WebView2 Runtime is required to run Tamias. Open Microsoft's official download page now? Install the Evergreen Runtime there, then run this setup again.
 english.WebView2OpenFailed=The browser could not be opened. Visit https://developer.microsoft.com/microsoft-edge/webview2/ to install the Microsoft Edge WebView2 Runtime, then run this setup again.
 english.DesktopTask=Create a desktop shortcut
 english.ShortcutGroup=Additional shortcuts:
-english.LaunchProgram=Launch tamiops
-chinesesimp.WebView2Missing=运行 tamiops 需要 Microsoft Edge WebView2 Runtime。现在打开 Microsoft 官方下载页面吗？请在那里安装 Evergreen Runtime，然后重新运行此安装程序。
+english.LaunchProgram=Launch Tamias
+chinesesimp.WebView2Missing=运行小花鼠需要 Microsoft Edge WebView2 Runtime。现在打开 Microsoft 官方下载页面吗？请在那里安装 Evergreen Runtime，然后重新运行此安装程序。
 chinesesimp.WebView2OpenFailed=无法打开浏览器。请访问 https://developer.microsoft.com/microsoft-edge/webview2/ 安装 Microsoft Edge WebView2 Runtime，然后重新运行此安装程序。
 chinesesimp.DesktopTask=创建桌面快捷方式
 chinesesimp.ShortcutGroup=其他快捷方式：
-chinesesimp.LaunchProgram=启动 tamiops
+chinesesimp.LaunchProgram=启动小花鼠
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:DesktopTask}"; GroupDescription: "{cm:ShortcutGroup}"; Flags: unchecked
 
 [Files]
-Source: "{#RepoRoot}\bin\tamiops.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourcePath}\tamiops.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RepoRoot}\bin\tamias.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}\tamias.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoRoot}\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\tamiops"; Filename: "{app}\tamiops.exe"; WorkingDir: "{app}"; IconFilename: "{app}\tamiops.ico"
-Name: "{autodesktop}\tamiops"; Filename: "{app}\tamiops.exe"; WorkingDir: "{app}"; IconFilename: "{app}\tamiops.ico"; Tasks: desktopicon
+Name: "{autoprograms}\Tamias"; Filename: "{app}\tamias.exe"; WorkingDir: "{app}"; IconFilename: "{app}\tamias.ico"
+Name: "{autodesktop}\Tamias"; Filename: "{app}\tamias.exe"; WorkingDir: "{app}"; IconFilename: "{app}\tamias.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\tamiops.exe"; Description: "{cm:LaunchProgram}"; Flags: postinstall nowait skipifsilent unchecked
+Filename: "{app}\tamias.exe"; Description: "{cm:LaunchProgram}"; Flags: postinstall nowait skipifsilent unchecked
 
 [Code]
 function IsPositiveVersion(const Version: String): Boolean;

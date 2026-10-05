@@ -39,8 +39,8 @@ for key, package in sorted(lock["packages"].items()):
         continue
     collect(key.removeprefix("node_modules/") + "@" + package["version"], root / "frontend" / key)
 
-parts = ["tamiops — Third-party notices\n\n"
-         "tamiops source code is licensed under AGPL-3.0-only; see LICENSE.\n"
+parts = ["Tamias — Third-party notices\n\n"
+         "Tamias source code is licensed under AGPL-3.0-only; see LICENSE.\n"
          "The following dependencies retain their own licenses. This document\n"
          "contains Go module and production npm dependency license/notice texts.\n"
          "SQLite, embedded by go-sqlite3, is public domain: https://sqlite.org/copyright.html\n"

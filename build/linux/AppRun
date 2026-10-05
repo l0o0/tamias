@@ -85,4 +85,4 @@ LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 LD_PRELOAD="$WEBKIT_PATH_SHIM${LD_PRELOAD:+:$LD_PRELOAD}"
 export LD_LIBRARY_PATH LD_PRELOAD
 
-exec "$APPDIR/usr/bin/tamiops" "$@"
+exec "$APPDIR/usr/bin/tamias" "$@"
