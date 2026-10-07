@@ -42,6 +42,7 @@ done
 
 APP_BINARY="$ROOT_DIR/bin/tamias/tamias"
 ICON="$ROOT_DIR/build/assets/app-icon.png"
+ICON_SVG="$ROOT_DIR/build/assets/app-icon.svg"
 DESKTOP="$ROOT_DIR/build/assets/io.tamiops.tami.desktop"
 APP_LICENSE="$ROOT_DIR/LICENSE"
 APP_NOTICES="$ROOT_DIR/THIRD_PARTY_NOTICES.txt"
@@ -50,6 +51,7 @@ APP_RUN="$ROOT_DIR/build/linux/AppRun"
 WEBKIT_PATH_SHIM_SOURCE="$ROOT_DIR/build/linux/webkit-path-shim.c"
 [[ -x "$APP_BINARY" ]] || die "built Linux binary is missing or not executable: $APP_BINARY"
 [[ -s "$ICON" ]] || die "application icon is missing or empty: $ICON"
+[[ -s "$ICON_SVG" ]] || die "scalable application icon is missing or empty: $ICON_SVG"
 [[ -s "$DESKTOP" ]] || die "desktop entry is missing or empty: $DESKTOP"
 [[ -s "$APP_LICENSE" ]] || die "root LICENSE is missing or empty"
 [[ -s "$APP_NOTICES" ]] || die "root THIRD_PARTY_NOTICES.txt is missing or empty"
@@ -113,7 +115,8 @@ trap cleanup EXIT
 TOOLS_DIR="$WORK_DIR/tools"
 APP_DIR="$WORK_DIR/tamias-x86_64.AppDir"
 mkdir -p -- "$TOOLS_DIR" "$APP_DIR/usr/bin" "$APP_DIR/usr/share/doc/tamias" \
-    "$APP_DIR/usr/share/applications" "$APP_DIR/usr/share/icons/hicolor/1024x1024/apps"
+    "$APP_DIR/usr/share/applications" "$APP_DIR/usr/share/icons/hicolor/1024x1024/apps" \
+    "$APP_DIR/usr/share/icons/hicolor/scalable/apps"
 
 fetch_pinned() {
     local url="$1" expected="$2" destination="$3" actual
@@ -142,6 +145,12 @@ fetch_pinned \
 printf '%s\n' 'Preparing AppDir'
 install -m 0755 "$APP_BINARY" "$APP_DIR/usr/bin/tamias"
 install -m 0644 "$ICON" "$APP_DIR/usr/share/icons/hicolor/1024x1024/apps/io.tamiops.tami.png"
+# GTK enumerates themed sizes when exporting the X11 window icon; an unthemed
+# PNG is insufficient. Scalable icons yield a small taskbar image instead of a
+# 1024px image that can exceed the X11 property size limit. Keep the complete
+# distro hicolor index so other standard icon sizes remain available as well.
+install -m 0644 /usr/share/icons/hicolor/index.theme "$APP_DIR/usr/share/icons/hicolor/index.theme"
+install -m 0644 "$ICON_SVG" "$APP_DIR/usr/share/icons/hicolor/scalable/apps/io.tamiops.tami.svg"
 ln -s usr/share/icons/hicolor/1024x1024/apps/io.tamiops.tami.png "$APP_DIR/io.tamiops.tami.png"
 ln -s io.tamiops.tami.png "$APP_DIR/.DirIcon"
 install -m 0644 "$DESKTOP" "$APP_DIR/usr/share/applications/io.tamiops.tami.desktop"

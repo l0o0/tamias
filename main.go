@@ -214,6 +214,7 @@ func runDesktop(dataDir string) error {
 		window.Focus()
 	}
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		application.InvokeSync(configureWindowIcons)
 		windowFocusMu.Lock()
 		applicationReady = true
 		flushPendingFocus := pendingWindowFocus && focusWindowSlot != nil && !shuttingDown
