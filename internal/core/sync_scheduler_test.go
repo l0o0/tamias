@@ -185,7 +185,8 @@ func TestWatchIgnoresDSStoreChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadataPath := filepath.Join(metadataDir, ".DS_Store")
-	if err := os.WriteFile(metadataPath, []byte("before"), 0600); err != nil {
+	trackedPath := filepath.Join(dir, "tracked.txt")
+	if err := os.WriteFile(trackedPath, []byte("before"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	job := syncJob(t, s, id, dir, "upload", Job{Watch: true})
@@ -201,20 +202,84 @@ func TestWatchIgnoresDSStoreChanges(t *testing.T) {
 	}
 	key := schedulerKey{s, job.ID}
 	schedulerObservations.Store(key, scheduleObservation{localFingerprint: fingerprint, lastFullScan: time.Now()})
-	if err = os.WriteFile(metadataPath, []byte("changed metadata size"), 0600); err != nil {
+	metadataChanges := []struct {
+		name string
+		edit func() error
+	}{
+		{name: "create", edit: func() error { return os.WriteFile(metadataPath, []byte("before"), 0600) }},
+		{name: "update", edit: func() error { return os.WriteFile(metadataPath, []byte("changed metadata size"), 0600) }},
+		{name: "delete", edit: func() error { return os.Remove(metadataPath) }},
+	}
+	for i, change := range metadataChanges {
+		if err = change.edit(); err != nil {
+			t.Fatal(err)
+		}
+		// Windows can refresh the containing directory's timestamp after a
+		// child file change. Force that condition on every platform so the
+		// regression does not depend on the host filesystem's timestamp rules.
+		forcedTime := time.Unix(2_000_000_000+int64(i), 0)
+		if err = os.Chtimes(metadataDir, forcedTime, forcedTime); err != nil {
+			t.Fatalf("set parent directory time after .DS_Store %s: %v", change.name, err)
+		}
+		s.schedulerCycle(context.Background(), false)
+		stateAny, ok := schedulerObservations.Load(key)
+		if !ok {
+			t.Fatal("watcher dropped its observation")
+		}
+		state := stateAny.(scheduleObservation)
+		if state.localDirty || state.localFingerprint != fingerprint {
+			t.Fatalf(".DS_Store %s marked the watch dirty: %+v", change.name, state)
+		}
+		if got := counter.lists.Load(); got != 0 {
+			t.Fatalf(".DS_Store %s triggered %d remote list calls", change.name, got)
+		}
+	}
+
+	if err = os.WriteFile(trackedPath, []byte("tracked file changed size"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	s.schedulerCycle(context.Background(), false)
 	stateAny, ok := schedulerObservations.Load(key)
 	if !ok {
-		t.Fatal("watcher dropped its observation")
+		t.Fatal("watcher dropped its observation after a tracked file edit")
 	}
 	state := stateAny.(scheduleObservation)
-	if state.localDirty || state.localFingerprint != fingerprint {
-		t.Fatalf(".DS_Store change marked the watch dirty: %+v", state)
+	if !state.localDirty || state.localFingerprint == fingerprint {
+		t.Fatalf("tracked file edit was not detected: %+v", state)
 	}
-	if got := counter.lists.Load(); got != 0 {
-		t.Fatalf(".DS_Store change triggered %d remote list calls", got)
+
+	beforeDirectories := state.localFingerprint
+	emptyA := filepath.Join(dir, "empty-a")
+	if err = os.Mkdir(emptyA, 0700); err != nil {
+		t.Fatal(err)
+	}
+	createdDirectory, err := localMetadataFingerprint(context.Background(), dir, job.Exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdDirectory == beforeDirectories {
+		t.Fatal("empty directory creation did not change the local metadata fingerprint")
+	}
+	emptyB := filepath.Join(dir, "empty-b")
+	if err = os.Rename(emptyA, emptyB); err != nil {
+		t.Fatal(err)
+	}
+	renamedDirectory, err := localMetadataFingerprint(context.Background(), dir, job.Exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamedDirectory == createdDirectory {
+		t.Fatal("empty directory rename did not change the local metadata fingerprint")
+	}
+	if err = os.Remove(emptyB); err != nil {
+		t.Fatal(err)
+	}
+	deletedDirectory, err := localMetadataFingerprint(context.Background(), dir, job.Exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deletedDirectory != beforeDirectories {
+		t.Fatal("empty directory deletion did not restore the prior local metadata fingerprint")
 	}
 }
 

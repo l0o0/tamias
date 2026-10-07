@@ -220,6 +220,14 @@ func localMetadataFingerprint(ctx context.Context, localPath string, excludes []
 		if err != nil {
 			return err
 		}
+		if info.IsDir() {
+			// A platform may update a parent directory's size or mtime when an
+			// excluded child file changes. Child paths already capture directory
+			// membership changes, so directory fingerprints use only stable identity
+			// and mode metadata.
+			fmt.Fprintf(h, "%s\x00dir\x00%d\n", filepath.ToSlash(key), info.Mode())
+			return nil
+		}
 		fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\n", filepath.ToSlash(key), info.Size(), info.ModTime().UnixNano(), info.Mode())
 		return nil
 	})
