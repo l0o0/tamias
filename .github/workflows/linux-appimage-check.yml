@@ -68,3 +68,28 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: error
           retention-days: 7
+
+  ubuntu-26-runtime:
+    name: Ubuntu 26.04 X11 runtime
+    needs: appimage
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      VERSION: 0.0.0-ci.${{ github.run_number }}
+      ARCH: amd64
+      GTK_IM_MODULE: fcitx
+      XDG_SESSION_TYPE: x11
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tamias-linux-appimage-check-${{ github.run_number }}
+          path: dist
+      - name: Install runtime and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev build-essential pkg-config xvfb dbus-x11 bubblewrap xdg-dbus-proxy apparmor
+      - name: Verify the Ubuntu 24.04-built AppImage on Ubuntu 26.04
+        run: |
+          chmod +x "dist/tamias-${VERSION}-linux-${ARCH}.AppImage"
+          sh scripts/verify-appimage.sh
