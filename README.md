@@ -2,7 +2,7 @@
 
 轻量的 WebDAV / S3 桌面客户端，支持文件同步、备份恢复，以及将 S3 存储通过 WebDAV 提供给其他应用。
 
-基于 Go、Wails 和 Vue 构建。当前版本为 **0.2.0-beta.2**。
+基于 Go、Wails 和 Vue 构建。当前版本为 **0.2.0-beta.3**。
 
 ![小花鼠（Tamias）桌面界面](docs/assets/tamiops-integrated-titlebar.png)
 
@@ -17,11 +17,11 @@
 | Linux x64 | `.AppImage` | 添加执行权限后直接运行，要求 glibc 2.39+ |
 
 ```sh
-chmod +x tamias-0.2.0-beta.2-linux-amd64.AppImage
-./tamias-0.2.0-beta.2-linux-amd64.AppImage
+chmod +x tamias-0.2.0-beta.3-linux-amd64.AppImage
+./tamias-0.2.0-beta.3-linux-amd64.AppImage
 ```
 
-没有 FUSE 的 Linux 环境可改用 `./tamias-0.2.0-beta.2-linux-amd64.AppImage --appimage-extract-and-run`。
+没有 FUSE 的 Linux 环境可改用 `./tamias-0.2.0-beta.3-linux-amd64.AppImage --appimage-extract-and-run`。
 
 Linux 需要 X11 / XWayland 和允许 WebKit 沙箱运行的用户命名空间；Ubuntu 的 AppArmor 配置及其他依赖见 [Linux 使用说明](docs/linux.md)。
 

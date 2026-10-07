@@ -2,11 +2,11 @@
 
 下载 x64 AppImage，赋予执行权限后启动：
 
-以下示例使用 `0.2.0-beta.2`。其他版本请替换为对应的安装包文件名。
+以下示例使用 `0.2.0-beta.3`。其他版本请替换为对应的安装包文件名。
 
 ```sh
-chmod +x tamias-0.2.0-beta.2-linux-amd64.AppImage
-./tamias-0.2.0-beta.2-linux-amd64.AppImage
+chmod +x tamias-0.2.0-beta.3-linux-amd64.AppImage
+./tamias-0.2.0-beta.3-linux-amd64.AppImage
 ```
 
 当前构建要求 glibc 2.39+、X11 或 XWayland 图形会话、D-Bus、`bubblewrap`、`xdg-dbus-proxy`，以及允许 WebKit 沙箱使用的非特权用户命名空间。凭据存储需要 Secret Service（例如 GNOME Keyring）。GTK、WebKit 及其进程组件包含在 AppImage 内；系统服务和沙箱工具由发行版提供。Ubuntu 缺少沙箱工具时可安装：
@@ -15,7 +15,7 @@ chmod +x tamias-0.2.0-beta.2-linux-amd64.AppImage
 sudo apt install bubblewrap xdg-dbus-proxy
 ```
 
-当前源码构建的 AppImage 内含 Fcitx 5 的 GTK 4 输入法模块，已发布的 `0.2.0-beta.2` 尚未包含此修复。应用使用桌面会话现有的输入法进程和设置，不会启动或配置输入法。若 GTK 4 程序尚未选择 Fcitx，可按桌面环境设置 GTK 4 的输入法模块，例如在 `~/.config/gtk-4.0/settings.ini` 中配置：
+从 `0.2.0-beta.3` 起，AppImage 内含 Fcitx 5 的 GTK 4 输入法模块。应用使用桌面会话现有的输入法进程和设置，不会启动或配置输入法。若 GTK 4 程序尚未选择 Fcitx，可按桌面环境设置 GTK 4 的输入法模块，例如在 `~/.config/gtk-4.0/settings.ini` 中配置：
 
 ```ini
 [Settings]
@@ -31,7 +31,7 @@ GTK 4 的输入法模块选择也会受当前进程的 `GTK_IM_MODULE` 环境变
 使用运行时的解包启动模式：
 
 ```sh
-./tamias-0.2.0-beta.2-linux-amd64.AppImage --appimage-extract-and-run
+./tamias-0.2.0-beta.3-linux-amd64.AppImage --appimage-extract-and-run
 ```
 
 这会临时解包运行组件，需要额外临时空间。
@@ -44,7 +44,7 @@ Ubuntu 24.04 及之后的系统可能通过 AppArmor 限制非特权用户命名
 
 ```sh
 mkdir -p "$HOME/Applications"
-cp tamias-0.2.0-beta.2-linux-amd64.AppImage "$HOME/Applications/tamias.AppImage"
+cp tamias-0.2.0-beta.3-linux-amd64.AppImage "$HOME/Applications/tamias.AppImage"
 chmod +x "$HOME/Applications/tamias.AppImage"
 
 sudo tee /etc/apparmor.d/tamias-appimage >/dev/null <<EOF
