@@ -256,3 +256,11 @@
 Linux AppImage 的构建环境补齐 Fcitx 5 GTK4 模块，并打包其动态依赖。保留用户的输入法选择和 GTK 模块后备路径。[Ubuntu AppImage 验证](https://github.com/l0o0/tamias/actions/runs/37607287553)实际加载了 AppImage 内的 GTK4、Fcitx 输入模块及客户端库，桌面与 WebKit 启动检查通过；[三平台 CI](https://github.com/l0o0/tamias/actions/runs/37607287449)通过。该验证不启动真实 Fcitx daemon，不等同于用户 Linux 桌面中的中文候选与上屏实机验收。`0.2.0-beta.2` 尚未包含本次修复。
 
 用户补充环境为 Ubuntu 26.04 / Cinnamon / X11 后，增加 Ubuntu 26.04 运行检查，复用 Ubuntu 24.04 构建的同一安装包。修正测试辅助程序的库环境范围，避免包内旧版 libdbus 影响宿主系统的 D-Bus 启动工具。[双版本验证](https://github.com/l0o0/tamias/actions/runs/37613075063)通过：Ubuntu 26.04.1 上实际加载包内 GTK4、Fcitx 模块与客户端库，临时 AppArmor 授权及应用、WebKit 启动成功。该检查使用 Xvfb，并未启动 Cinnamon 或实际 Fcitx 输入法进程。
+
+## 2026-10-07：Linux 任务栏名称与图标
+
+显式设置 GTK Application ID 为 `io.tamiops.tami`、X11 窗口类为 `Tamias`，桌面文件使用相同的应用标识和 `StartupWMClass`。窗口标题保留“小花鼠”，直接运行 AppImage 时也提供可读的英文应用名，避免 Wails 从中文名称推导出默认框架标识。
+
+Wails v3.0.0-beta.27 的 GTK4 窗口图标设置没有实现。现在在 GTK 启动后的主循环中设置主题图标，覆盖已创建窗口和后续窗口；AppImage 内安装现有棕色小花鼠 SVG 及完整 hicolor 索引。GTK 将可缩放图标渲染为适合任务栏的尺寸，避开 1024px PNG 超出 X11 图标大小限制的问题。原有透明 PNG 继续用于 AppImage 文件图标。
+
+[Ubuntu 24.04 与 26.04 X11 验证](https://github.com/l0o0/tamias/actions/runs/37631778651)通过。检查运行中的原生窗口标题、`WM_CLASS`、`_GTK_APPLICATION_ID` 和 `_NET_WM_ICON`，验证实际导出图标包含透明及棕色像素，并保存导出的 PNG。测试使用隔离数据目录和 Xvfb，没有启动完整 Cinnamon 桌面；任务栏分组及鼠标悬停的实际界面仍需在 Cinnamon 中复核。该修复尚未包含在 `v0.2.0-beta.3` 中。

@@ -18,6 +18,13 @@ application PNG into ICNS. Wails uses that colored PNG as the application
 icon, while the macOS menu-bar tray keeps the original monochrome template
 image so the system can tint it for light and dark menu bars.
 
+The Linux AppImage installs the same application SVG into its private hicolor
+scalable/apps theme, named io.tamiops.tami. GTK renders the taskbar window icon
+at a small size; passing the 1024 px PNG directly exceeds GTK's X11 icon limit.
+The full-size PNG remains the AppImage file/launcher icon. Desktop entry and
+GTK application ID use io.tamiops.tami; the X11 window class is Tamias so an
+uninstalled AppImage has a readable taskbar label in Cinnamon.
+
 Tray click greeting: build/assets/tray-tail/frame-00.png through frame-19.png.
 These 20 transparent 160 x 160 frames rotate only tm-logo-tail around (78,135),
 matching the UI's 1050 ms greeting. Regenerate just these frames with:
