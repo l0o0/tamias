@@ -67,6 +67,9 @@ fi
   "$image" --appimage-extract >/dev/null
 )
 appdir="$workspace/squashfs-root"
+test -s "$appdir/io.tamiops.tami.desktop"
+grep -Fxq 'StartupWMClass=Tamias' "$appdir/io.tamiops.tami.desktop"
+cmp build/assets/app-icon.png "$appdir/usr/share/icons/io.tamiops.tami.png"
 test -d "$appdir/usr/lib/gtk-4.0"
 test -s "$appdir/usr/lib/libgtk-4.so.1"
 test -s "$appdir/usr/lib/gtk-4.0/$(pkg-config --variable=gtk_binary_version gtk4)/immodules/libim-fcitx5.so"
@@ -144,6 +147,7 @@ xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
     echo 'AppImage process did not expose its APPDIR' >&2
     exit 1
   fi
+  python3 scripts/tests/linux-window-identity.py --pid "$app_pid" --output "$TAMIOPS_SMOKE_DIR/window-icon.png"
   bundled_webkit=0
   bundled_network=0
   for proc in /proc/[0-9]*; do
@@ -168,3 +172,4 @@ xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'
   fi
   echo 'AppImage desktop and WebKit process started successfully.'
 SMOKE
+cp "$workspace/window-icon.png" dist/linux-window-icon.png

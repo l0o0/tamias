@@ -5,10 +5,15 @@ on:
     paths:
       - '.github/workflows/linux-appimage-check.yml'
       - '.github/workflows/release.yml'
+      - 'main.go'
+      - 'desktop_identity_*.go'
+      - 'build/assets/**'
       - 'build/linux/**'
+      - 'scripts/build-desktop.sh'
       - 'scripts/package-linux.sh'
       - 'scripts/verify-appimage.sh'
       - 'scripts/tests/gtk4-fcitx-module-smoke.c'
+      - 'scripts/tests/linux-window-identity.py'
   pull_request:
     paths:
       - '.github/workflows/linux-appimage-check.yml'
@@ -18,6 +23,7 @@ on:
       - 'frontend/**'
       - 'internal/**'
       - 'main.go'
+      - 'desktop_identity_*.go'
       - 'go.mod'
       - 'go.sum'
       - 'scripts/**'
@@ -64,6 +70,12 @@ jobs:
         run: sh scripts/verify-appimage.sh
       - uses: actions/upload-artifact@v4
         with:
+          name: linux-window-icon-ubuntu-24.04-${{ github.run_number }}
+          path: dist/linux-window-icon.png
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
           name: tamias-linux-appimage-check-${{ github.run_number }}
           path: dist/*.AppImage
           if-no-files-found: error
@@ -93,3 +105,9 @@ jobs:
         run: |
           chmod +x "dist/tamias-${VERSION}-linux-${ARCH}.AppImage"
           sh scripts/verify-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-window-icon-ubuntu-26.04-${{ github.run_number }}
+          path: dist/linux-window-icon.png
+          if-no-files-found: error
+          retention-days: 7

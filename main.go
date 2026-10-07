@@ -122,6 +122,7 @@ func (s *handlerSlot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func runDesktop(dataDir string) error {
+	configureDesktopIdentity()
 	sub, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
 		return err
@@ -167,6 +168,9 @@ func runDesktop(dataDir string) error {
 		Services: []application.Service{application.NewService(notifier)},
 		Assets:   application.AssetOptions{Handler: assetHandler, DisableLogging: true},
 		Mac:      application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: false},
+		// Cinnamon uses WM_CLASS as the taskbar name for an AppImage launched
+		// without a desktop entry. Keep that name readable on X11 / XWayland.
+		Linux: application.LinuxOptions{ApplicationID: "io.tamiops.tami", ProgramName: "Tamias"},
 		OnShutdown: func() {
 			windowFocusMu.Lock()
 			shuttingDown = true

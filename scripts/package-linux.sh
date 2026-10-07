@@ -42,7 +42,7 @@ done
 
 APP_BINARY="$ROOT_DIR/bin/tamias/tamias"
 ICON="$ROOT_DIR/build/assets/app-icon.png"
-DESKTOP="$ROOT_DIR/build/assets/tamias.desktop"
+DESKTOP="$ROOT_DIR/build/assets/io.tamiops.tami.desktop"
 APP_LICENSE="$ROOT_DIR/LICENSE"
 APP_NOTICES="$ROOT_DIR/THIRD_PARTY_NOTICES.txt"
 GTK_PLUGIN="$ROOT_DIR/build/linux/linuxdeploy-plugin-gtk.sh"
@@ -61,7 +61,8 @@ readelf -h "$APP_BINARY" | grep -Eq 'Class:[[:space:]]+ELF64' || die "binary is 
 readelf -h "$APP_BINARY" | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' || die "binary is not x86_64: $APP_BINARY"
 desktop-file-validate "$DESKTOP"
 grep -Eq '^Exec=tamias([[:space:]]|$)' "$DESKTOP" || die "desktop entry must launch Exec=tamias"
-grep -Fxq 'Icon=tamias' "$DESKTOP" || die "desktop entry must use Icon=tamias"
+grep -Fxq 'Icon=io.tamiops.tami' "$DESKTOP" || die "desktop entry must use Icon=io.tamiops.tami"
+grep -Fxq 'StartupWMClass=Tamias' "$DESKTOP" || die "desktop entry must match the Tamias window class"
 
 pkg-config --exists gtk4 webkitgtk-6.0 || die "GTK4 and WebKitGTK 6.0 development metadata is required (install libgtk-4-dev and libwebkitgtk-6.0-dev)"
 printf 'GTK %s; WebKitGTK %s\n' "$(pkg-config --modversion gtk4)" "$(pkg-config --modversion webkitgtk-6.0)"
@@ -111,7 +112,8 @@ trap cleanup EXIT
 
 TOOLS_DIR="$WORK_DIR/tools"
 APP_DIR="$WORK_DIR/tamias-x86_64.AppDir"
-mkdir -p -- "$TOOLS_DIR" "$APP_DIR/usr/bin" "$APP_DIR/usr/share/doc/tamias"
+mkdir -p -- "$TOOLS_DIR" "$APP_DIR/usr/bin" "$APP_DIR/usr/share/doc/tamias" \
+    "$APP_DIR/usr/share/applications" "$APP_DIR/usr/share/icons"
 
 fetch_pinned() {
     local url="$1" expected="$2" destination="$3" actual
@@ -139,9 +141,13 @@ fetch_pinned \
 
 printf '%s\n' 'Preparing AppDir'
 install -m 0755 "$APP_BINARY" "$APP_DIR/usr/bin/tamias"
-install -m 0644 "$ICON" "$APP_DIR/tamias.png"
-ln -s tamias.png "$APP_DIR/.DirIcon"
-install -m 0644 "$DESKTOP" "$APP_DIR/tamias.desktop"
+install -m 0644 "$ICON" "$APP_DIR/io.tamiops.tami.png"
+ln -s io.tamiops.tami.png "$APP_DIR/.DirIcon"
+install -m 0644 "$DESKTOP" "$APP_DIR/io.tamiops.tami.desktop"
+# AppRun adds usr/share to XDG_DATA_DIRS. GTK's unthemed icon fallback searches
+# each data root's icons directory, so no host icon installation is required.
+ln -s ../../../io.tamiops.tami.png "$APP_DIR/usr/share/icons/io.tamiops.tami.png"
+ln -s ../../../io.tamiops.tami.desktop "$APP_DIR/usr/share/applications/io.tamiops.tami.desktop"
 install -m 0755 "$APP_RUN" "$APP_DIR/AppRun"
 install -m 0644 "$APP_LICENSE" "$APP_DIR/usr/share/doc/tamias/LICENSE"
 install -m 0644 "$APP_NOTICES" "$APP_DIR/usr/share/doc/tamias/THIRD_PARTY_NOTICES.txt"
