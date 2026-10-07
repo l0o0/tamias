@@ -74,6 +74,13 @@ if [ -d "$APPDIR/apprun-hooks" ]; then
     done
 fi
 
+# GTK's bundled hook points GTK_PATH at the AppDir modules. Keep any caller-
+# provided entries available after the bundled modules as user-module fallbacks.
+if [ "${TAMIOPS_ORIGINAL_GTK_PATH_SET:-0}" = 1 ] && [ -n "${TAMIOPS_ORIGINAL_GTK_PATH:-}" ]; then
+    GTK_PATH="${GTK_PATH:+$GTK_PATH:}$TAMIOPS_ORIGINAL_GTK_PATH"
+    export GTK_PATH
+fi
+
 # Keep WebKit's AppDir library subtree visible inside Bubblewrap. The path shim
 # rewrites only its exact compiled helper argv values to this same AppDir.
 WEBKIT_PATH_SHIM="$APPDIR/usr/lib/libtamiops-webkit-paths.so"

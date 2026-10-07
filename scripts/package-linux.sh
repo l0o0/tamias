@@ -66,6 +66,16 @@ grep -Fxq 'Icon=tamias' "$DESKTOP" || die "desktop entry must use Icon=tamias"
 pkg-config --exists gtk4 webkitgtk-6.0 || die "GTK4 and WebKitGTK 6.0 development metadata is required (install libgtk-4-dev and libwebkitgtk-6.0-dev)"
 printf 'GTK %s; WebKitGTK %s\n' "$(pkg-config --modversion gtk4)" "$(pkg-config --modversion webkitgtk-6.0)"
 
+GTK4_LIBDIR="$(pkg-config --variable=libdir gtk4)"
+GTK4_BINARY_VERSION="$(pkg-config --variable=gtk_binary_version gtk4)"
+FCITX_GTK4_MODULE="$GTK4_LIBDIR/gtk-4.0/$GTK4_BINARY_VERSION/immodules/libim-fcitx5.so"
+[[ -s "$FCITX_GTK4_MODULE" ]] || die "Fcitx5 GTK4 input module is missing: install fcitx5-frontend-gtk4"
+fcitx_ldd="$(ldd "$FCITX_GTK4_MODULE" 2>&1 || true)"
+if grep -q 'not found' <<<"$fcitx_ldd"; then
+    printf '%s\n' "$fcitx_ldd" >&2
+    die "Fcitx5 GTK4 input module has unresolved system libraries"
+fi
+
 binary_ldd="$({ ldd "$APP_BINARY" 2>&1 || true; })"
 if grep -q 'not found' <<<"$binary_ldd"; then
     printf '%s\n' "$binary_ldd" >&2
@@ -233,6 +243,10 @@ done
 for library in "${WEBKIT_LIBRARIES[@]}"; do
     LINUXDEPLOY_ARGS+=(--library "$library")
 done
+# GTK loads input methods dynamically, so linuxdeploy cannot discover this
+# dependency from the application ELF. Deploy the Fcitx module explicitly;
+# the GTK plugin also copies the GTK4 module directory into its canonical path.
+LINUXDEPLOY_ARGS+=(--library "$FCITX_GTK4_MODULE")
 LINUXDEPLOY_ARGS+=(--plugin gtk)
 APPIMAGE_EXTRACT_AND_RUN=1 "$LINUXDEPLOY" "${LINUXDEPLOY_ARGS[@]}"
 
@@ -258,6 +272,16 @@ for elf in "$APP_DIR/usr/bin/tamias" "${WEBKIT_EXECUTABLES[@]}" "${WEBKIT_LIBRAR
     [[ "$elf_rpath" == *'$ORIGIN'* ]] || \
         die "linuxdeploy did not set an AppDir-relative RPATH on ${elf#"$APP_DIR"/}"
 done
+
+BUNDLED_FCITX_GTK4_MODULE="$APP_DIR/usr/lib/gtk-4.0/$GTK4_BINARY_VERSION/immodules/libim-fcitx5.so"
+[[ -s "$BUNDLED_FCITX_GTK4_MODULE" ]] || die "linuxdeploy did not bundle the Fcitx5 GTK4 input module"
+bundled_fcitx_ldd="$(LD_LIBRARY_PATH="$APP_DIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$BUNDLED_FCITX_GTK4_MODULE" 2>&1 || true)"
+if grep -q 'not found' <<<"$bundled_fcitx_ldd"; then
+    printf '%s\n' "$bundled_fcitx_ldd" >&2
+    die "bundled Fcitx5 GTK4 input module has unresolved libraries"
+fi
+fcitx_client_path="$(awk '/libFcitx5GClient\.so/ { print $3; exit }' <<<"$bundled_fcitx_ldd")"
+[[ "$fcitx_client_path" == "$APP_DIR"/* ]] || die "Fcitx5 GTK4 module client library was not bundled: ${fcitx_client_path:-not found}"
 
 collect_package_notices() {
     local doc_dir="$APP_DIR/usr/share/doc/tamias/system-dependencies"

@@ -61,6 +61,26 @@ PROFILE
   fi
   echo "Loaded temporary AppArmor userns rule for $image only ($apparmor_profile)."
 fi
+
+(
+  cd "$workspace"
+  "$image" --appimage-extract >/dev/null
+)
+appdir="$workspace/squashfs-root"
+test -d "$appdir/usr/lib/gtk-4.0"
+test -s "$appdir/usr/lib/libgtk-4.so.1"
+test -s "$appdir/usr/lib/gtk-4.0/$(pkg-config --variable=gtk_binary_version gtk4)/immodules/libim-fcitx5.so"
+test -s "$workspace/squashfs-root/usr/lib/libFcitx5GClient.so.2"
+gtk4_cflags=$(pkg-config --cflags gtk4)
+gtk4_libs=$(pkg-config --libs gtk4)
+cc -Wall -Wextra -Werror $gtk4_cflags \
+  scripts/tests/gtk4-fcitx-module-smoke.c -o "$workspace/gtk4-fcitx-module-smoke" $gtk4_libs
+GTK_PATH="$appdir/usr/lib/gtk-4.0" \
+GTK_EXE_PREFIX="$appdir/usr" \
+LD_LIBRARY_PATH="$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+GDK_BACKEND=x11 \
+xvfb-run -a dbus-run-session -- "$workspace/gtk4-fcitx-module-smoke" "$appdir"
+
 export TAMIOPS_SMOKE_IMAGE="$image" TAMIOPS_SMOKE_DIR="$workspace"
 export TAMIOPS_SMOKE_APPARMOR_PROFILE="$apparmor_profile"
 xvfb-run -a dbus-run-session -- sh -eu <<'SMOKE'

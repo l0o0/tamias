@@ -114,7 +114,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev build-essential pkg-config patchelf squashfs-tools desktop-file-utils libfuse2t64 xvfb dbus-x11 dpkg-dev python3 bubblewrap xdg-dbus-proxy apparmor
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev fcitx5-frontend-gtk4 build-essential pkg-config patchelf squashfs-tools desktop-file-utils libfuse2t64 xvfb dbus-x11 dpkg-dev python3 bubblewrap xdg-dbus-proxy apparmor
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend

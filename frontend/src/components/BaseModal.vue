@@ -113,6 +113,9 @@ function onClick(event: MouseEvent) {
 
 function onKeydown(event: KeyboardEvent) {
   if (!props.modelValue || !isTopModal()) return
+  // Escape and Tab also control IME candidates. Let the input method handle
+  // them, including WebKit's legacy 229 events at composition boundaries.
+  if (event.isComposing || event.keyCode === 229) return
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()

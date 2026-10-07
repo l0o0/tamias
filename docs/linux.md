@@ -15,6 +15,15 @@ chmod +x tamias-0.2.0-beta.2-linux-amd64.AppImage
 sudo apt install bubblewrap xdg-dbus-proxy
 ```
 
+当前源码构建的 AppImage 内含 Fcitx 5 的 GTK 4 输入法模块，已发布的 `0.2.0-beta.2` 尚未包含此修复。应用使用桌面会话现有的输入法进程和设置，不会启动或配置输入法。若 GTK 4 程序尚未选择 Fcitx，可按桌面环境设置 GTK 4 的输入法模块，例如在 `~/.config/gtk-4.0/settings.ini` 中配置：
+
+```ini
+[Settings]
+gtk-im-module=fcitx
+```
+
+GTK 4 的输入法模块选择也会受当前进程的 `GTK_IM_MODULE` 环境变量影响；AppImage 保留该变量及桌面设置，不会替用户改选输入法。更多环境说明见 [Fcitx 5 官方 GTK 设置指南](https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland)。
+
 ## 没有 FUSE
 
 使用运行时的解包启动模式：

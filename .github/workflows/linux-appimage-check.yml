@@ -1,0 +1,70 @@
+name: Linux AppImage check
+
+on:
+  push:
+    paths:
+      - '.github/workflows/linux-appimage-check.yml'
+      - '.github/workflows/release.yml'
+      - 'build/linux/**'
+      - 'scripts/package-linux.sh'
+      - 'scripts/verify-appimage.sh'
+      - 'scripts/tests/gtk4-fcitx-module-smoke.c'
+  pull_request:
+    paths:
+      - '.github/workflows/linux-appimage-check.yml'
+      - '.github/workflows/release.yml'
+      - 'build/assets/**'
+      - 'build/linux/**'
+      - 'frontend/**'
+      - 'internal/**'
+      - 'main.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'scripts/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VERSION: 0.0.0-ci.${{ github.run_number }}
+      ARCH: amd64
+      BUILD_NUMBER: ${{ github.run_number }}
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Linux build and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev fcitx5-frontend-gtk4 build-essential pkg-config patchelf squashfs-tools desktop-file-utils libfuse2t64 xvfb dbus-x11 dpkg-dev python3 bubblewrap xdg-dbus-proxy apparmor
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Build desktop application
+        run: sh scripts/build-desktop.sh
+      - name: Package Linux AppImage
+        run: bash scripts/package-linux.sh
+      - name: Verify Linux AppImage
+        run: sh scripts/verify-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamias-linux-appimage-check-${{ github.run_number }}
+          path: dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 7

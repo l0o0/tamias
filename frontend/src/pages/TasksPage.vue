@@ -6,6 +6,7 @@ import BaseModal from '../components/BaseModal.vue'
 import SquirrelMark from '../components/SquirrelMark.vue'
 import TaskIcon from '../components/TaskIcon.vue'
 import TaskIconPicker from '../components/TaskIconPicker.vue'
+import RemoteFolderPicker from '../components/RemoteFolderPicker.vue'
 import TaskFlow from '../components/TaskFlow.vue'
 import { notify, refreshState, setSelectedConnection, store } from '../store'
 import type { Direction, Job, JobPreview, QueueItem, SyncScanHistory } from '../types'
@@ -18,6 +19,7 @@ const runningJob = ref('')
 const previewBusy = ref('')
 const showPreview = ref(false)
 const showEdit = ref(false)
+const remoteFolderPickerOpen = ref(false)
 const selectedJob = ref<Job | null>(null)
 const savingIconId = ref('')
 const iconPickerOpen = ref(false)
@@ -58,6 +60,7 @@ const statusTone: Record<string, string> = { synced: 'green', running: 'blue', r
 watch(showCreate, (open) => { if (open) resetForm() })
 function resetForm() { Object.assign(form, { name: '', icon: '', connectionId: store.selectedConnectionId, localPath: '', remotePath: '', direction: 'both', excludeText: '', scheduleMinutes: 0, watch: false, deleteThreshold: 20 }) }
 function openCreate() { showCreate.value = true }
+function openRemoteFolderPicker() { remoteFolderPickerOpen.value = true }
 function openFormIconPicker() {
   iconPickerMode.value = 'form'
   iconPickerJobId.value = ''
@@ -349,7 +352,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeTaskMenuOutside
         <div class="task-name-field"><label class="field"><span>任务名称</span><input v-model="form.name" required maxlength="80" placeholder="例如：工作资料" /></label><button type="button" class="task-form-icon-trigger" :disabled="submitting || picking || !!savingIconId" :aria-label="`选择任务图标，当前${taskIconLabel(form.icon)}`" aria-haspopup="dialog" :aria-expanded="iconPickerOpen && iconPickerMode === 'form'" @click="openFormIconPicker"><TaskIcon :icon="form.icon" :direction="form.direction" :size="20" /><span>{{taskIconLabel(form.icon)}}</span></button></div>
         <label class="field"><span>远端连接</span><select v-model="form.connectionId" required><option value="" disabled>选择一个连接</option><option v-for="c in store.data.connections" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
         <div class="field"><span>本地文件夹</span><div class="input-button-row"><input v-model="form.localPath" aria-label="本地文件夹" required placeholder="选择本机文件夹" /><button class="button secondary" type="button" :disabled="picking" @click="pickFolder">{{ picking ? '选择中…' : '浏览' }}</button></div></div>
-        <label class="field"><span>远端文件夹</span><input v-model="form.remotePath" placeholder="留空表示连接根目录" /></label>
+        <div class="field"><span>远端文件夹</span><div class="input-button-row"><input v-model="form.remotePath" aria-label="远端文件夹" placeholder="留空表示连接根目录" /><button class="button secondary" type="button" :disabled="submitting || picking || !form.connectionId" @click="openRemoteFolderPicker">浏览</button></div></div>
         <label class="field"><span>同步方式</span><select v-model="form.direction"><option value="both">双向同步</option><option value="upload">只上传</option><option value="download">只下载</option><option v-if="form.direction === 'mirror-upload'" value="mirror-upload">上传镜像（高级设置）</option><option v-if="form.direction === 'mirror-download'" value="mirror-download">下载镜像（高级设置）</option></select></label>
         <details class="task-options"><summary>高级设置</summary><div class="form-stack">
           <div class="field"><span>镜像同步</span><small class="field-hint">镜像会删除多余文件；执行前会列出具体路径并要求确认。</small><div class="mirror-options"><button type="button" :class="{ selected: form.direction === 'mirror-upload' }" :aria-pressed="form.direction === 'mirror-upload'" @click="form.direction = 'mirror-upload'"><b>上传镜像</b><small>会删除远端多余文件</small></button><button type="button" :class="{ selected: form.direction === 'mirror-download' }" :aria-pressed="form.direction === 'mirror-download'" @click="form.direction = 'mirror-download'"><b>下载镜像</b><small>会删除本地多余文件</small></button></div></div>
@@ -367,7 +370,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeTaskMenuOutside
         <div class="task-name-field"><label class="field"><span>任务名称</span><input v-model="form.name" required maxlength="80" /></label><button type="button" class="task-form-icon-trigger" :disabled="submitting || picking || !!savingIconId" :aria-label="`选择任务图标，当前${taskIconLabel(form.icon)}`" aria-haspopup="dialog" :aria-expanded="iconPickerOpen && iconPickerMode === 'form'" @click="openFormIconPicker"><TaskIcon :icon="form.icon" :direction="form.direction" :size="20" /><span>{{taskIconLabel(form.icon)}}</span></button></div>
         <label class="field"><span>远端连接</span><select v-model="form.connectionId" required><option v-for="c in store.data.connections" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
         <div class="field"><span>本地文件夹</span><div class="input-button-row"><input v-model="form.localPath" aria-label="本地文件夹" required /><button class="button secondary" type="button" :disabled="picking" @click="pickFolder">{{ picking ? '选择中…' : '浏览' }}</button></div></div>
-        <label class="field"><span>远端文件夹</span><input v-model="form.remotePath" placeholder="留空表示连接根目录" /></label>
+        <div class="field"><span>远端文件夹</span><div class="input-button-row"><input v-model="form.remotePath" aria-label="远端文件夹" placeholder="留空表示连接根目录" /><button class="button secondary" type="button" :disabled="submitting || picking || !form.connectionId" @click="openRemoteFolderPicker">浏览</button></div></div>
         <label class="field"><span>同步方式</span><select v-model="form.direction"><option value="both">双向同步</option><option value="upload">只上传</option><option value="download">只下载</option><option v-if="form.direction === 'mirror-upload'" value="mirror-upload">上传镜像（高级设置）</option><option v-if="form.direction === 'mirror-download'" value="mirror-download">下载镜像（高级设置）</option></select></label>
         <details class="task-options" :open="!!(editTarget?.exclude?.length || editTarget?.watch || editTarget?.scheduleMinutes || editTarget?.direction.startsWith('mirror'))"><summary>高级设置</summary><div class="form-stack">
           <div class="field"><span>镜像同步</span><small class="field-hint">镜像会删除多余文件；执行前会列出具体路径并要求确认。</small><div class="mirror-options"><button type="button" :class="{ selected: form.direction === 'mirror-upload' }" :aria-pressed="form.direction === 'mirror-upload'" @click="form.direction = 'mirror-upload'"><b>上传镜像</b><small>会删除远端多余文件</small></button><button type="button" :class="{ selected: form.direction === 'mirror-download' }" :aria-pressed="form.direction === 'mirror-download'" @click="form.direction = 'mirror-download'"><b>下载镜像</b><small>会删除本地多余文件</small></button></div></div>
@@ -401,6 +404,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeTaskMenuOutside
     <BaseModal :model-value="!!deleteTarget" title="删除同步任务" subtitle="仅删除任务配置，文件会保留。" @update:model-value="(v) => { if (!v) deleteTarget = null }">
       <div class="confirm-panel"><div class="confirm-warning"><Trash2 :size="18" /></div><p>确定删除“{{ deleteTarget?.name }}”吗？</p><footer class="modal-actions"><button class="button secondary" :disabled="runningJob!==''" @click="deleteTarget = null">取消</button><button class="button danger" :disabled="runningJob!==''" @click="removeJob">{{runningJob===deleteTarget?.id?'正在删除…':'删除任务'}}</button></footer></div>
     </BaseModal>
+    <RemoteFolderPicker v-model="remoteFolderPickerOpen" :connection-id="form.connectionId" :initial-path="form.remotePath" @select="form.remotePath = $event" />
     <TaskIconPicker v-model="iconPickerOpen" :icon="iconPickerIcon" :direction="iconPickerDirection" :busy="!!savingIconId" :error="iconPickerError" @select="selectTaskIcon" />
   </div>
 </template>
