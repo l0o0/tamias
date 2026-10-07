@@ -24,6 +24,8 @@ gtk-im-module=fcitx
 
 GTK 4 的输入法模块选择也会受当前进程的 `GTK_IM_MODULE` 环境变量影响；AppImage 保留该变量及桌面设置，不会替用户改选输入法。更多环境说明见 [Fcitx 5 官方 GTK 设置指南](https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland)。
 
+输入法兼容性检查使用 Ubuntu 24.04 构建同一个 AppImage，再分别在 Ubuntu 24.04 与 26.04 的 X11 测试环境中验证包内 GTK 4、Fcitx 5 模块和客户端库加载，以及应用与 WebKit 进程启动。自动检查使用 Xvfb；Cinnamon 等实际桌面的候选框、切换输入法和中文上屏仍需实机验证。
+
 ## 没有 FUSE
 
 使用运行时的解包启动模式：

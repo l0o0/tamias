@@ -254,3 +254,5 @@
 已在隔离演示空间与回环 WebDAV 中验证中文及带空格的子目录、根目录、空目录、取消保留、不存在目录、权限错误、慢速请求返回后不覆盖新列表，以及创建和编辑任务的保存回填。760×620 与 620×500 下布局正常。输入法组合事件中的 Escape、Tab 与兼容 keyCode 229 不再触发弹窗快捷键；普通 Escape 仍仅关闭最上层弹窗并恢复原按钮焦点。
 
 Linux AppImage 的构建环境补齐 Fcitx 5 GTK4 模块，并打包其动态依赖。保留用户的输入法选择和 GTK 模块后备路径。[Ubuntu AppImage 验证](https://github.com/l0o0/tamias/actions/runs/37607287553)实际加载了 AppImage 内的 GTK4、Fcitx 输入模块及客户端库，桌面与 WebKit 启动检查通过；[三平台 CI](https://github.com/l0o0/tamias/actions/runs/37607287449)通过。该验证不启动真实 Fcitx daemon，不等同于用户 Linux 桌面中的中文候选与上屏实机验收。`0.2.0-beta.2` 尚未包含本次修复。
+
+用户补充环境为 Ubuntu 26.04 / Cinnamon / X11 后，增加 Ubuntu 26.04 运行检查，复用 Ubuntu 24.04 构建的同一安装包。修正测试辅助程序的库环境范围，避免包内旧版 libdbus 影响宿主系统的 D-Bus 启动工具。[双版本验证](https://github.com/l0o0/tamias/actions/runs/37613075063)通过：Ubuntu 26.04.1 上实际加载包内 GTK4、Fcitx 模块与客户端库，临时 AppArmor 授权及应用、WebKit 启动成功。该检查使用 Xvfb，并未启动 Cinnamon 或实际 Fcitx 输入法进程。
