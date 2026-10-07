@@ -4,17 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version without v (for example 0.2.0-beta.1)
+        description: Existing version tag without v (for example 0.2.0-beta.2)
         required: true
         type: string
   push:
     tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-installers
+  group: release-${{ github.event.release.tag_name || (github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version)) || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -22,17 +24,52 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - id: version
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="${REQUESTED_VERSION:-${GITHUB_REF_NAME#v}}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo 'Invalid release version' >&2
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch) version="$REQUESTED_VERSION" ;;
+            release) version="${RELEASE_TAG#v}" ;;
+            push) version="${GITHUB_REF_NAME#v}" ;;
+            *) echo 'Unsupported release event' >&2; exit 1 ;;
+          esac
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo 'Use a semantic version such as 0.2.0 or 0.2.0-beta.2 (without build metadata)' >&2
+            exit 1
+          fi
+          if [[ "$version" == *-* ]]; then
+            IFS=. read -ra identifiers <<< "${version#*-}"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^0[0-9]+$ ]]; then
+                echo 'Numeric prerelease identifiers cannot have leading zeroes' >&2
+                exit 1
+              fi
+            done
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == release && "$RELEASE_TAG" != "v$version" ]]; then
+            echo 'Release tag must start with v' >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.version.outputs.tag }}
+      - name: Pin all builds to the tagged commit
+        id: source
+        run: |
+          source_sha="$(git rev-parse HEAD^{commit})"
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+            test "$source_sha" = "$(git rev-parse "$GITHUB_SHA^{commit}")" || {
+              echo 'Release tag changed after this event was created' >&2
+              exit 1
+            }
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
@@ -62,6 +99,8 @@ jobs:
       CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
@@ -125,41 +164,39 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  draft:
+  publish:
     needs: [prepare, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: installer-*
           path: dist
           merge-multiple: true
-      - name: Check artifact set and create checksums
+      - name: Publish installers and checksums
+        run: bash scripts/publish-release.sh
+      - name: Release summary
         run: |
-          test -s "dist/tamias-${VERSION}-macos-arm64.pkg"
-          test -s "dist/tamias-${VERSION}-macos-amd64.pkg"
-          test -s "dist/tamias-${VERSION}-windows-amd64-setup.exe"
-          test -s "dist/tamias-${VERSION}-linux-amd64.AppImage"
-          cd dist
-          sha256sum *.pkg *.exe *.AppImage > SHA256SUMS.txt
-      - name: Create reviewable release draft
-        run: |
-          tag="v$VERSION"
-          notes="docs/releases/$VERSION.md"
-          test -f "$notes"
-          if gh release view "$tag" --json isDraft --jq '.isDraft' > .release-draft 2>/dev/null; then
-            test "$(cat .release-draft)" = true || { echo 'Refusing to replace a published release'; exit 1; }
-            test "$(gh release view "$tag" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA" || { echo 'Draft belongs to a different commit'; exit 1; }
-          else
-            flags=()
-            [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
-            gh release create "$tag" --target "$GITHUB_SHA" --title "Tamias $VERSION" --notes-file "$notes" --draft "${flags[@]}"
-          fi
-          gh release upload "$tag" dist/*.pkg dist/*.exe dist/*.AppImage dist/SHA256SUMS.txt --clobber
+          {
+            echo '## Installers published'
+            echo
+            echo "Version: v$VERSION · Commit: $SOURCE_SHA"
+            echo
+            echo "[Download installers](https://github.com/$GH_REPO/releases/tag/v$VERSION)"
+            echo
+            echo '- Windows x64: setup.exe'
+            echo '- macOS Apple Silicon and Intel: .pkg'
+            echo '- Linux x64: .AppImage'
+            echo '- SHA256SUMS.txt'
+          } >> "$GITHUB_STEP_SUMMARY"

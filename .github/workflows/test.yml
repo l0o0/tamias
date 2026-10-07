@@ -1,6 +1,16 @@
 name: Core and desktop
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
+  release-scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release script syntax
+        run: bash -n scripts/publish-release.sh
+      - name: Test release publishing without network access
+        run: python3 -B -m unittest discover -s scripts/tests -v
   test:
     strategy:
       fail-fast: false
